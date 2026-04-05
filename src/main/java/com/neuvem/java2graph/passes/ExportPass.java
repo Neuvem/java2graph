@@ -49,7 +49,9 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("classes.csv").toFile());
              CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "isInterface", "declarationCode"))) {
             for (ClassNode node : context.classes.values()) {
-                printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                if (node.getId() != null && !node.getId().isBlank()) {
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                }
             }
         }
     }
@@ -58,7 +60,9 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("methods.csv").toFile());
              CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "signature", "sourceCode", "containingClassFqn", "isLambda"))) {
             for (MethodNode node : context.methods.values()) {
-                printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.getContainingClassFqn(), node.isLambda());
+                if (node.getId() != null && !node.getId().isBlank()) {
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.getContainingClassFqn(), node.isLambda());
+                }
             }
         }
     }
@@ -67,7 +71,10 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("inheritance.csv").toFile());
              CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("childFqn", "parentFqn", "type"))) {
             for (InheritanceEdge edge : context.inheritanceEdges) {
-                printer.printRecord(edge.getChildFqn(), edge.getParentFqn(), edge.getType());
+                if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank() && 
+                    edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
+                    printer.printRecord(edge.getChildFqn(), edge.getParentFqn(), edge.getType());
+                }
             }
         }
     }
@@ -76,7 +83,10 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("method_calls.csv").toFile());
              CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("caller", "called"))) {
             for (MethodCallEdge edge : context.callEdges) {
-                printer.printRecord(edge.getCallerMethodFqn(), edge.getCalledMethodFqn());
+                if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank() && 
+                    edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
+                    printer.printRecord(edge.getCallerMethodFqn(), edge.getCalledMethodFqn());
+                }
             }
         }
     }
@@ -85,7 +95,8 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("method_definitions.csv").toFile());
              CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("classFqn", "methodFqn"))) {
             for (MethodNode node : context.methods.values()) {
-                if (node.getContainingClassFqn() != null) {
+                if (node.getContainingClassFqn() != null && !node.getContainingClassFqn().isBlank() && 
+                    node.getFqn() != null && !node.getFqn().isBlank()) {
                     printer.printRecord(node.getContainingClassFqn(), node.getFqn());
                 }
             }
@@ -112,7 +123,9 @@ public class ExportPass implements Pass {
             try (FileWriter out = new FileWriter(classesCsv.toFile());
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (ClassNode node : context.classes.values()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                    if (node.getId() != null && !node.getId().isBlank()) {
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                    }
                 }
             }
 
@@ -120,7 +133,9 @@ public class ExportPass implements Pass {
             try (FileWriter out = new FileWriter(methodsCsv.toFile());
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (MethodNode node : context.methods.values()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.isLambda());
+                    if (node.getId() != null && !node.getId().isBlank()) {
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.isLambda());
+                    }
                 }
             }
 
@@ -131,10 +146,13 @@ public class ExportPass implements Pass {
                  CSVPrinter extPrinter = new CSVPrinter(extOut, CSVFormat.DEFAULT);
                  CSVPrinter implPrinter = new CSVPrinter(implOut, CSVFormat.DEFAULT)) {
                 for (InheritanceEdge edge : context.inheritanceEdges) {
-                    if ("EXTENDS".equals(edge.getType())) {
-                        extPrinter.printRecord(edge.getChildFqn(), edge.getParentFqn());
-                    } else {
-                        implPrinter.printRecord(edge.getChildFqn(), edge.getParentFqn());
+                    if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank() &&
+                        edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
+                        if ("EXTENDS".equals(edge.getType())) {
+                            extPrinter.printRecord(edge.getChildFqn(), edge.getParentFqn());
+                        } else {
+                            implPrinter.printRecord(edge.getChildFqn(), edge.getParentFqn());
+                        }
                     }
                 }
             }
@@ -143,7 +161,10 @@ public class ExportPass implements Pass {
             try (FileWriter out = new FileWriter(callsCsv.toFile());
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (MethodCallEdge edge : context.callEdges) {
-                    printer.printRecord(edge.getCallerMethodFqn(), edge.getCalledMethodFqn());
+                    if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank() &&
+                        edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
+                        printer.printRecord(edge.getCallerMethodFqn(), edge.getCalledMethodFqn());
+                    }
                 }
             }
 
@@ -151,7 +172,8 @@ public class ExportPass implements Pass {
             try (FileWriter out = new FileWriter(definesCsv.toFile());
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (MethodNode node : context.methods.values()) {
-                    if (node.getContainingClassFqn() != null) {
+                    if (node.getContainingClassFqn() != null && !node.getContainingClassFqn().isBlank() &&
+                        node.getFqn() != null && !node.getFqn().isBlank()) {
                         printer.printRecord(node.getContainingClassFqn(), node.getFqn());
                     }
                 }

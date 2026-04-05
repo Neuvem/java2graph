@@ -5,6 +5,7 @@ import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt;
 import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.stmt.TryStmt;
@@ -17,9 +18,7 @@ import com.github.javaparser.resolution.types.ResolvedType;
 import com.neuvem.java2graph.Java2GraphConfig;
 import com.neuvem.java2graph.models.*;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ResolvePass implements Pass {
@@ -39,13 +38,21 @@ public class ResolvePass implements Pass {
         System.out.println("Adding stub nodes for external references...");
         
         context.inheritanceEdges.forEach(edge -> {
-            context.classes.computeIfAbsent(edge.getChildFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
-            context.classes.computeIfAbsent(edge.getParentFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
+            if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank()) {
+                context.classes.computeIfAbsent(edge.getChildFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
+            }
+            if (edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
+                context.classes.computeIfAbsent(edge.getParentFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
+            }
         });
 
         context.callEdges.forEach(edge -> {
-            context.methods.computeIfAbsent(edge.getCallerMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
-            context.methods.computeIfAbsent(edge.getCalledMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
+            if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank()) {
+                context.methods.computeIfAbsent(edge.getCallerMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
+            }
+            if (edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
+                context.methods.computeIfAbsent(edge.getCalledMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
+            }
         });
 
         System.out.println("Finished resolving. Classes: " + context.classes.size() +
@@ -60,6 +67,10 @@ public class ResolvePass implements Pass {
         private final Map<String, String> importMap;
         /** Method-name → Class FQN map for static method imports. */
         private final Map<String, String> staticImportMap;
+        /** List of star-import packages (e.g. "java.util"). */
+        private final List<String> starImports;
+        /** List of static star-import class FQNs (e.g. "org.junit.Assert"). */
+        private final List<String> staticStarImports;
 
         private String currentClassFqn = null;
         private String currentMethodFqn = null;
@@ -70,28 +81,48 @@ public class ResolvePass implements Pass {
 
         public ResolverVisitor(GraphContext context, CompilationUnit cu) {
             this.context = context;
-            Map<String, Map<String, String>> imports = buildImportMaps(cu);
+            String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
+            Map<String, Map<String, String>> imports = buildImportMaps(cu, pkg);
             this.importMap = imports.get("types");
             this.staticImportMap = imports.get("static");
+            this.starImports = new ArrayList<>(imports.get("stars").keySet());
+            this.staticStarImports = new ArrayList<>(imports.get("staticStars").keySet());
         }
 
-        private static Map<String, Map<String, String>> buildImportMaps(CompilationUnit cu) {
+        private static Map<String, Map<String, String>> buildImportMaps(CompilationUnit cu, String currentPkg) {
             Map<String, String> types = new HashMap<>();
             Map<String, String> statics = new HashMap<>();
+            Map<String, String> stars = new HashMap<>();
+            Map<String, String> staticStars = new HashMap<>();
+            
+            // Implicitly include java.lang and the current package
+            stars.put("java.lang", "java.lang");
+            if (!currentPkg.isEmpty()) {
+                stars.put(currentPkg, currentPkg);
+            }
+
             for (ImportDeclaration imp : cu.getImports()) {
                 String fqn = imp.getNameAsString();
-                String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
-                if (imp.isStatic()) {
-                    // import static com.foo.Bar.method; OR import static com.foo.Bar.NestedClass;
-                    statics.put(simpleName, fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : fqn);
-                } else if (!imp.isAsterisk()) {
-                    // import com.foo.Bar;
-                    types.put(simpleName, fqn);
+                if (imp.isAsterisk()) {
+                    if (imp.isStatic()) {
+                        staticStars.put(fqn, fqn);
+                    } else {
+                        stars.put(fqn, fqn);
+                    }
+                } else {
+                    String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
+                    if (imp.isStatic()) {
+                        statics.put(simpleName, fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : fqn);
+                    } else {
+                        types.put(simpleName, fqn);
+                    }
                 }
             }
             Map<String, Map<String, String>> result = new HashMap<>();
             result.put("types", types);
             result.put("static", statics);
+            result.put("stars", stars);
+            result.put("staticStars", staticStars);
             return result;
         }
 
@@ -99,21 +130,30 @@ public class ResolvePass implements Pass {
             if (currentMethodFqn != null && calledFqn != null) {
                 // Ensure every call target has a Method node in our registry (parity with Joern)
                 context.methods.computeIfAbsent(calledFqn, k -> {
-                    String name = calledFqn;
-                    if (name.contains("(")) {
-                        name = name.substring(0, name.indexOf('('));
+                    String workingFqn = k;
+                    String baseFqn = workingFqn;
+                    String signature = "()";
+                    if (workingFqn.contains("(")) {
+                        baseFqn = workingFqn.substring(0, workingFqn.indexOf('('));
+                        signature = workingFqn.substring(workingFqn.indexOf('('));
                     }
+                    
                     String classFqn = "UNKNOWN";
-                    if (calledFqn.startsWith("<unresolvedNamespace>.")) {
+                    String name = baseFqn;
+                    if (baseFqn.startsWith("<unresolvedNamespace>.")) {
                         classFqn = "<unresolvedNamespace>";
-                        name = calledFqn.substring("<unresolvedNamespace>.".length());
-                    } else if (calledFqn.contains(".")) {
-                        classFqn = calledFqn.substring(0, calledFqn.lastIndexOf('.'));
-                        name = calledFqn.substring(calledFqn.lastIndexOf('.') + 1);
+                        name = baseFqn.substring("<unresolvedNamespace>.".length());
+                    } else if (baseFqn.startsWith(".")) {
+                        // Fix for dot-prefixed methods: redirect to unresolvedNamespace
+                        classFqn = "<unresolvedNamespace>";
+                        name = baseFqn.substring(1);
+                        workingFqn = classFqn + "." + name + signature;
+                    } else if (baseFqn.contains(".")) {
+                        classFqn = baseFqn.substring(0, baseFqn.lastIndexOf('.'));
+                        name = baseFqn.substring(baseFqn.lastIndexOf('.') + 1);
                     }
                     
                     // Register a placeholder ClassNode for the containing class if it doesn't exist
-                    // (required for LadybugDB ref-integrity in COPY command)
                     final String finalClassFqn = classFqn;
                     context.classes.computeIfAbsent(finalClassFqn, cfqn -> ClassNode.builder()
                             .id(cfqn).fqn(cfqn).name(cfqn.contains(".") ? cfqn.substring(cfqn.lastIndexOf('.') + 1) : cfqn)
@@ -121,12 +161,12 @@ public class ResolvePass implements Pass {
                             .build());
 
                     return MethodNode.builder()
-                            .id(calledFqn).fqn(calledFqn)
+                            .id(workingFqn).fqn(workingFqn)
                             .name(name)
-                            .signature("()")
+                            .signature(signature)
                             .sourceCode("// referenced external/synthetic method")
                             .containingClassFqn(finalClassFqn)
-                            .isLambda(calledFqn.contains("<lambda>"))
+                            .isLambda(workingFqn.contains("<lambda>"))
                             .build();
                 });
 
@@ -397,6 +437,17 @@ public class ResolvePass implements Pass {
                     // Primary: full symbol resolution
                     ResolvedMethodDeclaration resolved = n.resolve();
                     calledFqn = resolved.getQualifiedSignature();
+
+                    // IMPROVEMENT: Prefer receiver type for inherited methods (parity with Joern)
+                    if (n.getScope().isPresent()) {
+                        String scopeType = resolveScopeType(n.getScope().get());
+                        if (scopeType != null && !scopeType.isBlank() && !scopeType.equals("UNKNOWN")) {
+                            // Extract signature and method name, then re-prefix with scope type
+                            String signature = calledFqn.contains("(") ? calledFqn.substring(calledFqn.indexOf('(')) : "()";
+                            String methodName = resolved.getName();
+                            calledFqn = scopeType + "." + methodName + signature;
+                        }
+                    }
                 } catch (RuntimeException e) {
                     // Secondary: try to resolve just the scope type, or fall back
                     // to <unresolvedNamespace>.methodName(N) matching Joern's convention
@@ -422,13 +473,17 @@ public class ResolvePass implements Pass {
 
             if (n.getScope().isPresent()) {
                 String scopeType = resolveScopeType(n.getScope().get());
-                if (scopeType != null) {
+                if (scopeType != null && !scopeType.isBlank()) {
                     return scopeType + suffix;
                 }
             } else {
                 // No explicit scope → check static imports, then implicit "this"
                 if (staticImportMap.containsKey(methodName)) {
                     return staticImportMap.get(methodName) + suffix;
+                }
+                // Try static star imports
+                for (String staticStar : staticStarImports) {
+                    return staticStar + suffix; // Heuristic: assume first star import
                 }
                 if (currentClassFqn != null) {
                     return currentClassFqn + suffix;
@@ -446,6 +501,12 @@ public class ResolvePass implements Pass {
          * falls back to {@code <unresolvedNamespace>}.
          */
         private String resolveScopeType(Expression scope) {
+            return resolveScopeTypeRecursive(scope, 0);
+        }
+
+        private String resolveScopeTypeRecursive(Expression scope, int depth) {
+            if (depth > 5) return null; // Avoid circular/too-deep chains
+
             // Unwrap parentheses
             Expression unwrapped = scope;
             while (unwrapped.isEnclosedExpr()) {
@@ -454,17 +515,14 @@ public class ResolvePass implements Pass {
 
             // Cast → use the target type
             if (unwrapped.isCastExpr()) {
-                return qualify(unwrapped.asCastExpr().getType().asString());
+                return qualify(stripGenerics(unwrapped.asCastExpr().getType().asString()));
             }
 
-            // Symbol-solver type resolution (handles resolved names, fields, literals, …)
+            // Symbol-solver type resolution
             try {
                 ResolvedType rt = unwrapped.calculateResolvedType();
-                String desc = rt.describe();
-                // Wildcard types (?, ? extends T, ? super T) → unknowable
-                if (!desc.startsWith("?")) {
-                    return desc;
-                }
+                String desc = stripGenerics(rt.describe());
+                if (!desc.startsWith("?")) return desc;
             } catch (Exception ignored) { /* fall through */ }
 
             // Array index access → try to resolve the element type
@@ -473,10 +531,8 @@ public class ResolvePass implements Pass {
                     ResolvedType arrType = unwrapped.asArrayAccessExpr()
                             .getName().calculateResolvedType();
                     if (arrType.isArray()) {
-                        String comp = arrType.asArrayType().getComponentType().describe();
-                        if (!comp.startsWith("?")) {
-                            return comp;
-                        }
+                        String comp = stripGenerics(arrType.asArrayType().getComponentType().describe());
+                        if (!comp.startsWith("?")) return comp;
                     }
                 } catch (Exception ignored) { /* fall through */ }
             }
@@ -484,57 +540,114 @@ public class ResolvePass implements Pass {
             // NameExpr → try import-map qualification first, then AST var-decl lookup
             if (unwrapped.isNameExpr()) {
                 String name = unwrapped.asNameExpr().getNameAsString();
-
-                // 1. Check if the name itself is an imported class (static method call)
                 String qualified = qualify(name);
-                if (!qualified.equals(name)) {
-                    return qualified;
-                }
+                if (!qualified.equals(name)) return qualified;
 
-                // 2. Walk up the AST to find the variable/parameter declaration
-                //    and use its declared type (then qualify via import map)
                 String declaredType = findDeclaredType(unwrapped.asNameExpr());
-                if (declaredType != null) {
-                    return qualify(declaredType);
-                }
+                if (declaredType != null) return qualify(declaredType);
             }
 
-            // FieldAccessExpr (e.g. ClassName.FIELD) → qualify the scope part
+            // FieldAccessExpr (e.g. obj.field or Class.FIELD)
             if (unwrapped.isFieldAccessExpr()) {
                 FieldAccessExpr fae = unwrapped.asFieldAccessExpr();
-                if (fae.getScope().isNameExpr()) {
-                    String q = qualify(fae.getScope().asNameExpr().getNameAsString());
-                    return q + "." + fae.getNameAsString();
+                String scopeType = resolveScopeTypeRecursive(fae.getScope(), depth + 1);
+                if (scopeType != null) {
+                    // Guess: handle ClassName.CONSTANT
+                    return scopeType + "." + fae.getNameAsString();
                 }
             }
 
             // MethodCallExpr scope (e.g. getContext().getConfiguration())
-            // → try to resolve the scope method and get its return type
             if (unwrapped.isMethodCallExpr()) {
+                MethodCallExpr mce = unwrapped.asMethodCallExpr();
                 try {
-                    ResolvedMethodDeclaration scopeMethod = unwrapped.asMethodCallExpr().resolve();
-                    String returnType = scopeMethod.getReturnType().describe();
+                    ResolvedMethodDeclaration scopeMethod = mce.resolve();
+                    String returnType = stripGenerics(scopeMethod.getReturnType().describe());
                     if (!returnType.startsWith("?") && !"void".equals(returnType)) {
                         return returnType;
                     }
-                } catch (Exception ignored) { /* fall through */ }
+                } catch (Exception e) {
+                    // Heuristic fallback for method chains
+                    String mName = mce.getNameAsString();
+                    String guessed = guessReturnType(mName);
+                    if (guessed != null) return guessed;
+
+                    // Recursive heuristic: deduce the method's FQN and check our graph
+                    String deduced = deduceFqnManually(mce);
+                    MethodNode mn = context.methods.get(deduced);
+                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
+                        // We found the method in our source! But we don't store return type in MethodNode yet.
+                        // Future: store returnType in MethodNode.
+                    }
+                }
             }
 
             // ObjectCreationExpr (e.g. new Foo().method()) → type is Foo
             if (unwrapped.isObjectCreationExpr()) {
-                return qualify(unwrapped.asObjectCreationExpr().getTypeAsString());
+                return qualify(stripGenerics(unwrapped.asObjectCreationExpr().getTypeAsString()));
             }
 
-            // Cannot determine type → null  (caller will use <unresolvedNamespace>)
+            // this / super
+            if (unwrapped.isThisExpr()) {
+                return currentClassFqn;
+            }
+            if (unwrapped.isSuperExpr() && currentClassFqn != null) {
+                return context.inheritanceEdges.stream()
+                        .filter(e -> e.getChildFqn().equals(currentClassFqn) && e.getType().equals("EXTENDS"))
+                        .map(InheritanceEdge::getParentFqn)
+                        .findFirst().orElse(null);
+            }
+
+
+            return null;
+        }
+
+        private String guessReturnType(String mName) {
+            String n = mName;
+            if (n.equals("iterator") || n.equals("listIterator")) return "java.util.Iterator";
+            if (n.equals("stream") || n.equals("parallelStream")) return "java.util.stream.Stream";
+            if (n.equals("toString") || n.equals("getName") || n.equals("getSimpleName") || n.equals("getLocalizedMessage") || n.equals("getMessage")) return "java.lang.String";
+            if (n.equals("getClass")) return "java.lang.Class";
+            if (n.equals("hasNext") || n.equals("isEmpty") || n.equals("contains") || n.equals("equals") || n.equals("add") || n.equals("remove")) return "boolean";
+            if (n.equals("entrySet") || n.equals("keySet") || n.equals("values")) return "java.util.Collection";
+            if (n.equals("hashCode")) return "int";
+            if (n.equals("addFilter")) return "jakarta.servlet.FilterRegistration.Dynamic";
+            if (n.equals("computeIfAbsent") || n.equals("get") || n.equals("put") || n.equals("putIfAbsent") || n.equals("remove")) return "java.lang.Object";
+            if (n.equals("catching") || n.equals("throwing") || n.equals("info") || n.equals("debug") || n.equals("warn") || n.equals("error") || n.equals("atLevel")) return "org.apache.logging.log4j.Logger";
+            if (n.equals("checkState") || n.equals("checkArgument") || n.equals("checkNotNull") || n.equals("addSuppressed") || n.equals("printStackTrace") || n.equals("setAsyncSupported")) return "void";
+            if (n.equals("encode")) return "java.lang.Object";
             return null;
         }
 
         /**
          * If {@code simpleName} matches an import in this CU, return its FQN.
-         * Otherwise return it unchanged.
+         * Otherwise return it unchanged. Handles nested classes (e.g. Map.Entry).
          */
         private String qualify(String simpleName) {
-            return importMap.getOrDefault(simpleName, simpleName);
+            if (simpleName == null || simpleName.isEmpty()) return simpleName;
+            
+            if (importMap.containsKey(simpleName)) {
+                return importMap.get(simpleName);
+            }
+            
+            // Handle nested classes: Map.Entry -> jakarta.util.Map.Entry
+            if (simpleName.contains(".")) {
+                String prefix = simpleName.substring(0, simpleName.indexOf('.'));
+                String suffix = simpleName.substring(simpleName.indexOf('.'));
+                String qualifiedPrefix = qualify(prefix);
+                if (!qualifiedPrefix.equals(prefix)) {
+                    return qualifiedPrefix + suffix;
+                }
+            }
+
+            // Check star imports against known context classes
+            for (String star : starImports) {
+                String fqn = star + "." + simpleName;
+                if (context.classes.containsKey(fqn)) {
+                    return fqn;
+                }
+            }
+            return simpleName;
         }
 
         /**
@@ -585,28 +698,73 @@ public class ResolvePass implements Pass {
                         return stripGenerics(fes.getVariable().getCommonType().asString());
                     }
                 }
+
+                // Catch-clause variable: catch (IOException e) { e.getMessage() }
+                if (node instanceof CatchClause) {
+                    CatchClause cc = (CatchClause) node;
+                    Parameter p = cc.getParameter();
+                    if (p.getNameAsString().equals(varName)) {
+                        return stripGenerics(p.getTypeAsString());
+                    }
+                }
+
+                // Lambda parameter: (e) -> e.getMessage()
+                if (node instanceof LambdaExpr) {
+                    LambdaExpr le = (LambdaExpr) node;
+                    for (Parameter p : le.getParameters()) {
+                        if (p.getNameAsString().equals(varName)) {
+                            // If it's a simple lambda parameter without an explicit type, it's unknowable via AST.
+                            // But if they provided a type (e.g. (IOException e) -> e.getMessage()), we use it.
+                            String type = p.getTypeAsString();
+                            if (!type.equals("?")) return stripGenerics(type);
+                        }
+                    }
+                }
+
             }
 
-            // Try enclosing class fields as a last resort
+            // Search in parent classes via context inheritance edges (inheritance-aware)
             if (currentClassFqn != null) {
-                ClassNode classNode = context.classes.get(currentClassFqn);
-                if (classNode != null && classNode.getDeclarationCode() != null) {
-                    // Lightweight approach: search the compilationUnits for field declarations
-                    for (CompilationUnit cu : context.compilationUnits.values()) {
-                        for (TypeDeclaration<?> td : cu.getTypes()) {
-                            String tdFqn = td.getFullyQualifiedName().orElse("");
-                            if (tdFqn.equals(currentClassFqn)) {
-                                for (FieldDeclaration fd : td.getFields()) {
-                                    for (VariableDeclarator vd : fd.getVariables()) {
-                                        if (vd.getNameAsString().equals(varName)) {
-                                            return stripGenerics(vd.getTypeAsString());
-                                        }
-                                    }
+                String parentFqn = context.inheritanceEdges.stream()
+                        .filter(e -> e.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(e.getType()))
+                        .map(InheritanceEdge::getParentFqn)
+                        .findFirst().orElse(null);
+                if (parentFqn != null) {
+                    String foundInParent = searchClassForField(parentFqn, varName);
+                    if (foundInParent != null) return foundInParent;
+                }
+            }
+
+            return null;
+        }
+
+        private String searchClassForField(String classFqn, String varName) {
+            // Check compilation units for the class FQN and its fields
+            for (CompilationUnit cu : context.compilationUnits.values()) {
+                for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
+                    if (classFqn.equals(td.getFullyQualifiedName().orElse(""))) {
+                        for (FieldDeclaration fd : td.getFields()) {
+                            for (VariableDeclarator vd : fd.getVariables()) {
+                                if (vd.getNameAsString().equals(varName)) {
+                                    return stripGenerics(vd.getTypeAsString());
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            // Fallback: Use Symbol Solver for library parents (handles JARs and standard library)
+            if (context.typeSolver instanceof com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver) {
+                try {
+                    com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver ts = 
+                        (com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver) context.typeSolver;
+                    com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration ref = ts.solveType(classFqn);
+                    return ref.getAllFields().stream()
+                            .filter(f -> f.getName().equals(varName))
+                            .map(f -> stripGenerics(f.getType().describe()))
+                            .findFirst().orElse(null);
+                } catch (Exception ignored) {}
             }
 
             return null;
@@ -627,11 +785,20 @@ public class ResolvePass implements Pass {
 
         /**
          * Strip generic type parameters from a type string.
-         * "Map&lt;String, Integer&gt;" → "Map", "Logger" → "Logger"
+         * Also handles multi-catch types by picking the first one.
+         * "Map<String, Integer>" -> "Map", "IOException | SQLException" -> "IOException"
          */
         private static String stripGenerics(String typeStr) {
+            if (typeStr == null) return null;
+            // Handle multi-catch: "IOException | SQLException" -> "IOException"
+            int pipeIdx = typeStr.indexOf('|');
+            if (pipeIdx >= 0) {
+                typeStr = typeStr.substring(0, pipeIdx).trim();
+            }
             int idx = typeStr.indexOf('<');
-            return idx >= 0 ? typeStr.substring(0, idx).trim() : typeStr.trim();
+            String stripped = idx >= 0 ? typeStr.substring(0, idx).trim() : typeStr.trim();
+            // Fallback for naked generic parameters like <T> which substring to empty
+            return stripped.isEmpty() ? "java.lang.Object" : stripped;
         }
 
         // ──────────────────────────────────────────────────────────────────────

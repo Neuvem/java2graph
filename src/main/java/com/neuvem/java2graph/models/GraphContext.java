@@ -11,4 +11,7 @@ public class GraphContext {
     
     public final ConcurrentLinkedQueue<InheritanceEdge> inheritanceEdges = new ConcurrentLinkedQueue<>();
     public final ConcurrentLinkedQueue<MethodCallEdge> callEdges = new ConcurrentLinkedQueue<>();
+    
+    // Store the type solver for use across passes (symbol-solver resolution)
+    public Object typeSolver;
 }

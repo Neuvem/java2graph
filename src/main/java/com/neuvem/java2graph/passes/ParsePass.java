@@ -36,13 +36,13 @@ public class ParsePass implements Pass {
         // 2. JavaParserTypeSolver for source code being analyzed
         typeSolver.add(new JavaParserTypeSolver(config.getSrcDir()));
 
-        // 3. JarTypeSolver logic for scanning dependencies/ directory
         if (config.getJarPaths() != null) {
             for (Path jarPath : config.getJarPaths()) {
                 scanAndAddJars(typeSolver, jarPath);
             }
         }
 
+        context.typeSolver = typeSolver;
         JavaSymbolSolver symbolSolver = new JavaSymbolSolver(typeSolver);
         
         // Configure JavaParser with the Symbol Solver
