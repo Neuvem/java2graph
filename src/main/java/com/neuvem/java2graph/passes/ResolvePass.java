@@ -56,8 +56,10 @@ public class ResolvePass implements Pass {
 
     private static class ResolverVisitor extends VoidVisitorAdapter<Void> {
         private final GraphContext context;
-        /** Simple-name → FQN map built from the CU's import statements. */
+        /** Simple-name → FQN map for types. */
         private final Map<String, String> importMap;
+        /** Method-name → Class FQN map for static method imports. */
+        private final Map<String, String> staticImportMap;
 
         private String currentClassFqn = null;
         private String currentMethodFqn = null;
@@ -68,27 +70,66 @@ public class ResolvePass implements Pass {
 
         public ResolverVisitor(GraphContext context, CompilationUnit cu) {
             this.context = context;
-            this.importMap = buildImportMap(cu);
+            Map<String, Map<String, String>> imports = buildImportMaps(cu);
+            this.importMap = imports.get("types");
+            this.staticImportMap = imports.get("static");
         }
 
-        /**
-         * Build a simple-name → FQN map from the compilation unit's import declarations.
-         * Only single-type imports (not star imports) are used.
-         */
-        private static Map<String, String> buildImportMap(CompilationUnit cu) {
-            Map<String, String> map = new HashMap<>();
+        private static Map<String, Map<String, String>> buildImportMaps(CompilationUnit cu) {
+            Map<String, String> types = new HashMap<>();
+            Map<String, String> statics = new HashMap<>();
             for (ImportDeclaration imp : cu.getImports()) {
-                if (!imp.isAsterisk() && !imp.isStatic()) {
-                    String fqn = imp.getNameAsString();
-                    String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
-                    map.put(simpleName, fqn);
+                String fqn = imp.getNameAsString();
+                String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
+                if (imp.isStatic()) {
+                    // import static com.foo.Bar.method; OR import static com.foo.Bar.NestedClass;
+                    statics.put(simpleName, fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : fqn);
+                } else if (!imp.isAsterisk()) {
+                    // import com.foo.Bar;
+                    types.put(simpleName, fqn);
                 }
             }
-            return map;
+            Map<String, Map<String, String>> result = new HashMap<>();
+            result.put("types", types);
+            result.put("static", statics);
+            return result;
         }
 
         private void addCall(String calledFqn) {
             if (currentMethodFqn != null && calledFqn != null) {
+                // Ensure every call target has a Method node in our registry (parity with Joern)
+                context.methods.computeIfAbsent(calledFqn, k -> {
+                    String name = calledFqn;
+                    if (name.contains("(")) {
+                        name = name.substring(0, name.indexOf('('));
+                    }
+                    String classFqn = "UNKNOWN";
+                    if (calledFqn.startsWith("<unresolvedNamespace>.")) {
+                        classFqn = "<unresolvedNamespace>";
+                        name = calledFqn.substring("<unresolvedNamespace>.".length());
+                    } else if (calledFqn.contains(".")) {
+                        classFqn = calledFqn.substring(0, calledFqn.lastIndexOf('.'));
+                        name = calledFqn.substring(calledFqn.lastIndexOf('.') + 1);
+                    }
+                    
+                    // Register a placeholder ClassNode for the containing class if it doesn't exist
+                    // (required for LadybugDB ref-integrity in COPY command)
+                    final String finalClassFqn = classFqn;
+                    context.classes.computeIfAbsent(finalClassFqn, cfqn -> ClassNode.builder()
+                            .id(cfqn).fqn(cfqn).name(cfqn.contains(".") ? cfqn.substring(cfqn.lastIndexOf('.') + 1) : cfqn)
+                            .isInterface(false).declarationCode("// referenced external/synthetic class")
+                            .build());
+
+                    return MethodNode.builder()
+                            .id(calledFqn).fqn(calledFqn)
+                            .name(name)
+                            .signature("()")
+                            .sourceCode("// referenced external/synthetic method")
+                            .containingClassFqn(finalClassFqn)
+                            .isLambda(calledFqn.contains("<lambda>"))
+                            .build();
+                });
+
                 String edgeKey = currentMethodFqn + "→" + calledFqn;
                 if (seenEdges.add(edgeKey)) {
                     context.callEdges.add(MethodCallEdge.builder()
@@ -141,6 +182,25 @@ public class ResolvePass implements Pass {
                     context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                             .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
                             .signature("()").sourceCode("// synthetic default constructor")
+                            .containingClassFqn(finalFqn).isLambda(false).build());
+                }
+            } else if (n instanceof EnumDeclaration) {
+                // Enum always has a synthetic constructor
+                String ctorFqn = finalFqn + "." + n.getNameAsString() + "()";
+                context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
+                        .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
+                        .signature("()").sourceCode("// synthetic enum constructor")
+                        .containingClassFqn(finalFqn).isLambda(false).build());
+            } else if (n instanceof RecordDeclaration) {
+                // Record has a canonical constructor with its components as params
+                RecordDeclaration rd = (RecordDeclaration) n;
+                boolean hasExplicitCtor = rd.getConstructors().size() > 0;
+                if (!hasExplicitCtor) {
+                    int paramCount = rd.getParameters().size();
+                    String ctorFqn = finalFqn + "." + n.getNameAsString() + "(" + paramCount + ")";
+                    context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
+                            .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
+                            .signature("(" + paramCount + ")").sourceCode("// synthetic record constructor")
                             .containingClassFqn(finalFqn).isLambda(false).build());
                 }
             }
@@ -293,13 +353,13 @@ public class ResolvePass implements Pass {
                 }
             } catch (Exception ignored) { /* fall through */ }
 
-            // Build a Joern-style lambda FQN: enclosingClass.<lambda>N
-            String lambdaFqn = currentClassFqn + ".<lambda>" + idx;
+            // Build a Joern-style lambda FQN: enclosingClass.<lambda>N()
+            String lambdaFqn = currentClassFqn + ".<lambda>" + idx + "()";
 
             // Register the lambda as a method node
             context.methods.put(lambdaFqn, MethodNode.builder()
                     .id(lambdaFqn).fqn(lambdaFqn)
-                    .name("<lambda>" + idx)
+                    .name("<lambda>" + idx + "()")
                     .signature("()")
                     .sourceCode(n.toString())
                     .containingClassFqn(currentClassFqn)
@@ -358,15 +418,23 @@ public class ResolvePass implements Pass {
         private String deduceFqnManually(MethodCallExpr n) {
             String methodName = n.getNameAsString();
             int argCount = n.getArguments().size();
+            String suffix = "." + methodName + "(" + argCount + ")";
 
             if (n.getScope().isPresent()) {
                 String scopeType = resolveScopeType(n.getScope().get());
                 if (scopeType != null) {
-                    return scopeType + "." + methodName + "(" + argCount + ")";
+                    return scopeType + suffix;
+                }
+            } else {
+                // No explicit scope → check static imports, then implicit "this"
+                if (staticImportMap.containsKey(methodName)) {
+                    return staticImportMap.get(methodName) + suffix;
+                }
+                if (currentClassFqn != null) {
+                    return currentClassFqn + suffix;
                 }
             }
-            // Scope type is unknowable → Joern-style unresolved
-            return "<unresolvedNamespace>." + methodName + "(" + argCount + ")";
+            return "<unresolvedNamespace>" + suffix;
         }
 
         /**
@@ -578,8 +646,18 @@ public class ResolvePass implements Pass {
                     ResolvedConstructorDeclaration resolved = n.resolve();
                     calledFqn = resolved.getQualifiedSignature();
                 } catch (Exception e) {
-                    calledFqn = "UNRESOLVED.new." + qualify(n.getTypeAsString())
-                            + "(" + n.getArguments().size() + ")";
+                    // Better qualification: check imports and current package/class
+                    String typeName = n.getTypeAsString();
+                    String baseType = stripGenerics(typeName);
+                    String qualifiedType = qualify(baseType);
+
+                    // If it wasn't qualified but looks like a simple name, check inner class
+                    if (qualifiedType.equals(baseType) && !baseType.contains(".") && currentClassFqn != null) {
+                        qualifiedType = currentClassFqn + "." + baseType;
+                    }
+                    
+                    String simpleMethodName = baseType.contains(".") ? baseType.substring(baseType.lastIndexOf('.') + 1) : baseType;
+                    calledFqn = qualifiedType + "." + simpleMethodName + "(" + n.getArguments().size() + ")";
                 }
                 addCall(calledFqn);
             }
@@ -604,8 +682,17 @@ public class ResolvePass implements Pass {
                 try {
                     calledFqn = n.resolve().getQualifiedSignature();
                 } catch (Exception e) {
-                    calledFqn = "UNRESOLVED." + (n.isThis() ? "this" : "super")
-                            + "(" + n.getArguments().size() + ")";
+                    // Fallback using class inheritance info
+                    String targetClass = currentClassFqn;
+                    if (!n.isThis() && currentClassFqn != null) {
+                        // Find parent class from inheritance edges
+                        targetClass = context.inheritanceEdges.stream()
+                                .filter(edge -> edge.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(edge.getType()))
+                                .map(InheritanceEdge::getParentFqn)
+                                .findFirst().orElse("UNRESOLVED.super");
+                    }
+                    String simpleName = targetClass.contains(".") ? targetClass.substring(targetClass.lastIndexOf('.') + 1) : targetClass;
+                    calledFqn = targetClass + "." + simpleName + "(" + n.getArguments().size() + ")";
                 }
                 addCall(calledFqn);
             }
