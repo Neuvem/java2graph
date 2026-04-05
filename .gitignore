@@ -1,0 +1,55 @@
+# Build output
+target/
+
+# IDE files
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Maven wrapper
+.mvn/wrapper/maven-wrapper.jar
+
+# Logs
+*.log
+
+# Runtime data
+workspace/
+
+# Bundled app / JRE / custom runtime
+java2graph.app/
+custom-jre/
+
+# Compiled classes (outside target)
+*.class
+
+# Export files (generated output)
+*_export.json
+comparison_report.json
+comparison_report.json.old
+
+# Generated CSVs
+*.csv
+
+# Database files
+*.db
+your_ladybug_db
+
+# Python
+__pycache__/
+*.pyc
+
+# Env
+.env
+
+# Dummy test data
+dummy/
