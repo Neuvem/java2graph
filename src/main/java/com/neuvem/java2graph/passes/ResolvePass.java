@@ -31,7 +31,10 @@ public class ResolvePass implements Pass {
             try {
                 cu.accept(new ResolverVisitor(context, cu), null);
             } catch (Throwable e) {
-                System.err.println("Failed to resolve compilation unit: " + e.getMessage());
+                System.err.println("Failed to resolve compilation unit: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                if (e.getMessage() == null) {
+                    e.printStackTrace();
+                }
             }
         });
 
@@ -128,54 +131,58 @@ public class ResolvePass implements Pass {
 
         private void addCall(String calledFqn) {
             if (currentMethodFqn != null && calledFqn != null) {
-                // Ensure every call target has a Method node in our registry (parity with Joern)
-                context.methods.computeIfAbsent(calledFqn, k -> {
-                    String workingFqn = k;
-                    String baseFqn = workingFqn;
-                    String signature = "()";
-                    if (workingFqn.contains("(")) {
-                        baseFqn = workingFqn.substring(0, workingFqn.indexOf('('));
-                        signature = workingFqn.substring(workingFqn.indexOf('('));
-                    }
-                    
-                    String classFqn = "UNKNOWN";
-                    String name = baseFqn;
-                    if (baseFqn.startsWith("<unresolvedNamespace>.")) {
-                        classFqn = "<unresolvedNamespace>";
-                        name = baseFqn.substring("<unresolvedNamespace>.".length());
-                    } else if (baseFqn.startsWith(".")) {
-                        // Fix for dot-prefixed methods: redirect to unresolvedNamespace
-                        classFqn = "<unresolvedNamespace>";
-                        name = baseFqn.substring(1);
-                        workingFqn = classFqn + "." + name + signature;
-                    } else if (baseFqn.contains(".")) {
-                        classFqn = baseFqn.substring(0, baseFqn.lastIndexOf('.'));
-                        name = baseFqn.substring(baseFqn.lastIndexOf('.') + 1);
-                    }
-                    
-                    // Register a placeholder ClassNode for the containing class if it doesn't exist
-                    final String finalClassFqn = classFqn;
-                    context.classes.computeIfAbsent(finalClassFqn, cfqn -> ClassNode.builder()
-                            .id(cfqn).fqn(cfqn).name(cfqn.contains(".") ? cfqn.substring(cfqn.lastIndexOf('.') + 1) : cfqn)
-                            .isInterface(false).declarationCode("// referenced external/synthetic class")
-                            .build());
+                try {
+                    // Ensure every call target has a Method node in our registry (parity with Joern)
+                    context.methods.computeIfAbsent(calledFqn, k -> {
+                        String workingFqn = k;
+                        String baseFqn = workingFqn;
+                        String signature = "()";
+                        if (workingFqn.contains("(")) {
+                            baseFqn = workingFqn.substring(0, workingFqn.indexOf('('));
+                            signature = workingFqn.substring(workingFqn.indexOf('('));
+                        }
+                        
+                        String classFqn = "UNKNOWN";
+                        String name = baseFqn;
+                        if (baseFqn.startsWith("<unresolvedNamespace>.")) {
+                            classFqn = "<unresolvedNamespace>";
+                            name = baseFqn.substring("<unresolvedNamespace>.".length());
+                        } else if (baseFqn.startsWith(".")) {
+                            // Fix for dot-prefixed methods: redirect to unresolvedNamespace
+                            classFqn = "<unresolvedNamespace>";
+                            name = baseFqn.substring(1);
+                            workingFqn = classFqn + "." + name + signature;
+                        } else if (baseFqn.contains(".")) {
+                            classFqn = baseFqn.substring(0, baseFqn.lastIndexOf('.'));
+                            name = baseFqn.substring(baseFqn.lastIndexOf('.') + 1);
+                        }
+                        
+                        // Register a placeholder ClassNode for the containing class if it doesn't exist
+                        final String finalClassFqn = classFqn;
+                        context.classes.computeIfAbsent(finalClassFqn, cfqn -> ClassNode.builder()
+                                .id(cfqn).fqn(cfqn).name(cfqn.contains(".") ? cfqn.substring(cfqn.lastIndexOf('.') + 1) : cfqn)
+                                .isInterface(false).declarationCode("// referenced external/synthetic class")
+                                .build());
 
-                    return MethodNode.builder()
-                            .id(workingFqn).fqn(workingFqn)
-                            .name(name)
-                            .signature(signature)
-                            .sourceCode("// referenced external/synthetic method")
-                            .containingClassFqn(finalClassFqn)
-                            .isLambda(workingFqn.contains("<lambda>"))
-                            .build();
-                });
+                        return MethodNode.builder()
+                                .id(workingFqn).fqn(workingFqn)
+                                .name(name)
+                                .signature(signature)
+                                .sourceCode("// referenced external/synthetic method")
+                                .containingClassFqn(finalClassFqn)
+                                .isLambda(workingFqn.contains("<lambda>"))
+                                .build();
+                    });
 
-                String edgeKey = currentMethodFqn + "→" + calledFqn;
-                if (seenEdges.add(edgeKey)) {
-                    context.callEdges.add(MethodCallEdge.builder()
-                            .callerMethodFqn(currentMethodFqn)
-                            .calledMethodFqn(calledFqn)
-                            .build());
+                    String edgeKey = currentMethodFqn + "→" + calledFqn;
+                    if (seenEdges.add(edgeKey)) {
+                        context.callEdges.add(MethodCallEdge.builder()
+                                .callerMethodFqn(currentMethodFqn)
+                                .calledMethodFqn(calledFqn)
+                                .build());
+                    }
+                } catch (Exception e) {
+                    System.err.println("Warning: failed to add call edge from " + currentMethodFqn + " to " + calledFqn + ": " + e.getMessage());
                 }
             }
         }
