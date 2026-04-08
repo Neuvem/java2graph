@@ -5,7 +5,7 @@ echo "Building standalone application..."
 mvn clean package -DskipTests
 
 echo "Finding required JDK modules..."
-MODULES=$(jdeps --ignore-missing-deps -q --multi-release 11 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base,java.compiler,java.desktop,java.instrument,java.management,java.sql,jdk.attach,jdk.jdi,jdk.unsupported")
+MODULES=$(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base,java.compiler,java.desktop,java.instrument,java.management,java.sql,jdk.attach,jdk.jdi,jdk.unsupported")
 MODULES="${MODULES},java.logging,jdk.compiler,jdk.zipfs"
 echo "Modules required: $MODULES"
 
