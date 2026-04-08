@@ -9,8 +9,8 @@ public class GraphContext {
     public final ConcurrentHashMap<String, ClassNode> classes = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<String, MethodNode> methods = new ConcurrentHashMap<>();
     
-    public final ConcurrentLinkedQueue<InheritanceEdge> inheritanceEdges = new ConcurrentLinkedQueue<>();
-    public final ConcurrentLinkedQueue<MethodCallEdge> callEdges = new ConcurrentLinkedQueue<>();
+    public final java.util.Set<InheritanceEdge> inheritanceEdges = ConcurrentHashMap.newKeySet();
+    public final java.util.Set<MethodCallEdge> callEdges = ConcurrentHashMap.newKeySet();
     
     // Store the type solver for use across passes (symbol-solver resolution)
     public Object typeSolver;

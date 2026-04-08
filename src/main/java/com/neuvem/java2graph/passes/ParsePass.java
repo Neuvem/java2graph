@@ -89,8 +89,14 @@ public class ParsePass implements Pass {
         typeSolver.add(new ReflectionTypeSolver(false));
 
         if (config.getJarPaths() != null) {
+            java.util.List<java.net.URL> allUrls = new java.util.ArrayList<>();
             for (Path jarPath : config.getJarPaths()) {
-                scanAndAddJars(typeSolver, jarPath);
+                scanAndAddJars(allUrls, jarPath);
+            }
+            if (!allUrls.isEmpty()) {
+                System.out.println("Lazy-loading " + allUrls.size() + " dependency JARs via native URLClassLoader...");
+                java.net.URLClassLoader urlClassLoader = new java.net.URLClassLoader(allUrls.toArray(new java.net.URL[0]));
+                typeSolver.add(new ClassLoaderTypeSolver(urlClassLoader));
             }
         }
 
@@ -105,24 +111,24 @@ public class ParsePass implements Pass {
         System.out.println("Finished two-pass parsing and resolver configuration.");
     }
 
-    private void scanAndAddJars(CombinedTypeSolver typeSolver, Path path) throws IOException {
+    private void scanAndAddJars(java.util.List<java.net.URL> urls, Path path) {
         if (Files.isDirectory(path)) {
             try (Stream<Path> paths = Files.walk(path)) {
                 paths.filter(p -> p.toString().endsWith(".jar")).forEach(p -> {
                     try {
-                        typeSolver.add(new JarTypeSolver(p));
-                        System.out.println("Loaded dependency JAR: " + p.getFileName());
+                        urls.add(p.toUri().toURL());
                     } catch (Exception e) {
-                        System.err.println("Failed to load jar: " + p + " - " + e.getMessage());
+                        System.err.println("Failed to resolve URL for jar: " + p);
                     }
                 });
+            } catch (Exception e) {
+                System.err.println("Failed to read jar directory: " + path);
             }
         } else if (Files.exists(path) && path.toString().endsWith(".jar")) {
             try {
-                typeSolver.add(new JarTypeSolver(path));
-                System.out.println("Loaded dependency JAR: " + path.getFileName());
+                urls.add(path.toUri().toURL());
             } catch (Exception e) {
-                System.err.println("Failed to load jar: " + path + " - " + e.getMessage());
+                System.err.println("Failed to resolve URL for jar: " + path);
             }
         }
     }

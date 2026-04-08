@@ -174,18 +174,15 @@ public class DelombokPass implements Pass {
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
-            // Capture full output for debugging
-            StringBuilder taskOutput = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    taskOutput.append(line).append("\n");
-                    // Still print errors in real-time
-                    if (line.contains("error:") || line.contains("AssertionError") || line.contains("cannot find symbol") || line.contains("package")) {
-                        System.err.println("    [Lombok ERROR] " + line);
-                    }
-                }
+        // Capture full output for debugging
+        StringBuilder taskOutput = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                taskOutput.append(line).append("\n");
+                // Intentionally suppressed real-time error printing to reduce console noise
             }
+        }
 
             int exitCode = process.waitFor();
             if (exitCode != 0) {
@@ -194,6 +191,17 @@ public class DelombokPass implements Pass {
                 // output files even when Javac encounters missing symbols or unresolved dependencies.
             }
             Files.deleteIfExists(javaFilesListFile);
+
+            // Fallback: If Delombok completely crashed on a specific file and dropped it, 
+            // manually copy the original file into the target directory so we never lose symbols.
+            for (String originalFilePath : javaFiles) {
+                Path original = Path.of(originalFilePath);
+                Path expectedOutput = targetDir.resolve(root.relativize(original));
+                if (!Files.exists(expectedOutput)) {
+                    Files.createDirectories(expectedOutput.getParent());
+                    Files.copy(original, expectedOutput);
+                }
+            }
         }
 
         // Update the src directory for subsequent passes

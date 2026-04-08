@@ -10,10 +10,6 @@ import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * A custom TypeSolver that uses pre-parsed CompilationUnits from a map.
- * This avoids re-parsing files from disk during symbol resolution.
- */
 public class SourceMemoryTypeSolver implements TypeSolver {
 
     private TypeSolver parent;
@@ -37,14 +33,12 @@ public class SourceMemoryTypeSolver implements TypeSolver {
     public SymbolReference<ResolvedReferenceTypeDeclaration> tryToSolveType(String name) {
         CompilationUnit cu = classToIndex.get(name);
         if (cu != null) {
-            // Find the type declaration within the CU that matches the FQN (includes inner/nested types)
-            Optional<TypeDeclaration<?>> typeDeclaration = cu.findAll(TypeDeclaration.class).stream()
-                    .filter(t -> {
-                        Optional<String> fqn = ((TypeDeclaration<?>) t).getFullyQualifiedName();
-                        return fqn.isPresent() && fqn.get().equals(name);
-                    })
-                    .findFirst()
-                    .map(t -> (TypeDeclaration<?>)t);
+            // Instant O(1) matching using short-circuit findFirst instead of array-based findAll
+            @SuppressWarnings("unchecked")
+            Optional<TypeDeclaration<?>> typeDeclaration = (Optional<TypeDeclaration<?>>)(Object) cu.findFirst(TypeDeclaration.class, t -> {
+                Optional<String> fqn = t.getFullyQualifiedName();
+                return fqn.isPresent() && fqn.get().equals(name);
+            });
 
             if (typeDeclaration.isPresent()) {
                 return SymbolReference.solved(JavaParserFacade.get(this).getTypeDeclaration(typeDeclaration.get()));

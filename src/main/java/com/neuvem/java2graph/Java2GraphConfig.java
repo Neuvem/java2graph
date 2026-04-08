@@ -10,6 +10,7 @@ public class Java2GraphConfig {
     private Path outDbPath;
     private int threads;
     private boolean enableLombok;
+    private boolean fastResolve;
 
     public Java2GraphConfig() {}
 
@@ -31,6 +32,9 @@ public class Java2GraphConfig {
     public boolean isEnableLombok() { return enableLombok; }
     public void setEnableLombok(boolean enableLombok) { this.enableLombok = enableLombok; }
 
+    public boolean isFastResolve() { return fastResolve; }
+    public void setFastResolve(boolean fastResolve) { this.fastResolve = fastResolve; }
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
@@ -41,6 +45,7 @@ public class Java2GraphConfig {
         public Builder outDbPath(Path outDbPath) { config.outDbPath = outDbPath; return this; }
         public Builder threads(int threads) { config.threads = threads; return this; }
         public Builder enableLombok(boolean enableLombok) { config.enableLombok = enableLombok; return this; }
+        public Builder fastResolve(boolean fastResolve) { config.fastResolve = fastResolve; return this; }
         public Java2GraphConfig build() { return config; }
     }
 }

@@ -1,0 +1,420 @@
+2026-04-08 08:30:09
+Full thread dump OpenJDK 64-Bit Server VM (17.0.18+0 mixed mode):
+
+Threads class SMR info:
+_java_thread_list=0x000060000238ba80, length=16, elements={
+0x0000000132808c00, 0x000000013283e800, 0x000000013283ee00, 0x00000001338f3600,
+0x00000001338f3c00, 0x00000001338f4200, 0x0000000132844000, 0x0000000132840c00,
+0x0000000132841200, 0x0000000132839200, 0x0000000132839800, 0x0000000133a85600,
+0x00000001308c0e00, 0x00000001308c5600, 0x00000001308c5c00, 0x00000001319ae400
+}
+
+"main" #1 prio=5 os_prio=31 cpu=10568.57ms elapsed=329.35s tid=0x0000000132808c00 nid=0x2403 waiting on condition  [0x000000016ba92000]
+   java.lang.Thread.State: WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.18/Native Method)
+	- parking to wait for  <0x00000007d2eee1a0> (a java.util.stream.ForEachOps$ForEachTask)
+	at java.util.concurrent.locks.LockSupport.park(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.awaitDone(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.invoke(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp.evaluateParallel(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.evaluateParallel(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.evaluate(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ReferencePipeline.forEach(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ReferencePipeline$Head.forEach(java.base@17.0.18/Unknown Source)
+	at com.neuvem.java2graph.passes.ResolvePass.execute(ResolvePass.java:41)
+	at com.neuvem.java2graph.Main.call(Main.java:69)
+	at com.neuvem.java2graph.Main.call(Main.java:13)
+	at picocli.CommandLine.executeUserObject(CommandLine.java:2041)
+	at picocli.CommandLine.access$1500(CommandLine.java:148)
+	at picocli.CommandLine$RunLast.executeUserObjectOfLastSubcommandWithSameParent(CommandLine.java:2461)
+	at picocli.CommandLine$RunLast.handle(CommandLine.java:2453)
+	at picocli.CommandLine$RunLast.handle(CommandLine.java:2415)
+	at picocli.CommandLine$AbstractParseResultHandler.execute(CommandLine.java:2273)
+	at picocli.CommandLine$RunLast.execute(CommandLine.java:2417)
+	at picocli.CommandLine.execute(CommandLine.java:2170)
+	at com.neuvem.java2graph.Main.main(Main.java:39)
+
+"Reference Handler" #2 daemon prio=10 os_prio=31 cpu=32.59ms elapsed=329.33s tid=0x000000013283e800 nid=0x5803 waiting on condition  [0x000000016c8e6000]
+   java.lang.Thread.State: RUNNABLE
+	at java.lang.ref.Reference.waitForReferencePendingList(java.base@17.0.18/Native Method)
+	at java.lang.ref.Reference.processPendingReferences(java.base@17.0.18/Unknown Source)
+	at java.lang.ref.Reference$ReferenceHandler.run(java.base@17.0.18/Unknown Source)
+
+"Finalizer" #3 daemon prio=8 os_prio=31 cpu=0.13ms elapsed=329.33s tid=0x000000013283ee00 nid=0x7603 in Object.wait()  [0x000000016caf2000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.18/Native Method)
+	- waiting on <0x0000000700001988> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.18/Unknown Source)
+	- locked <0x0000000700001988> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.18/Unknown Source)
+	at java.lang.ref.Finalizer$FinalizerThread.run(java.base@17.0.18/Unknown Source)
+
+"Signal Dispatcher" #4 daemon prio=9 os_prio=31 cpu=0.09ms elapsed=329.33s tid=0x00000001338f3600 nid=0x6b03 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Service Thread" #5 daemon prio=9 os_prio=31 cpu=6.79ms elapsed=329.33s tid=0x00000001338f3c00 nid=0x5b03 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Monitor Deflation Thread" #6 daemon prio=9 os_prio=31 cpu=12.54ms elapsed=329.33s tid=0x00000001338f4200 nid=0x6903 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"C2 CompilerThread0" #7 daemon prio=9 os_prio=31 cpu=15673.70ms elapsed=329.33s tid=0x0000000132844000 nid=0x6703 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   Compiling: 11598       4       com.github.javaparser.resolution.logic.MethodResolutionLogic::findMostApplicable (30 bytes)
+
+"C1 CompilerThread0" #10 daemon prio=9 os_prio=31 cpu=2740.19ms elapsed=329.33s tid=0x0000000132840c00 nid=0x5d03 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   No compile task
+
+"Sweeper thread" #11 daemon prio=9 os_prio=31 cpu=241.74ms elapsed=329.33s tid=0x0000000132841200 nid=0x6403 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Notification Thread" #12 daemon prio=9 os_prio=31 cpu=0.01ms elapsed=329.32s tid=0x0000000132839200 nid=0x6203 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Common-Cleaner" #13 daemon prio=8 os_prio=31 cpu=2.25ms elapsed=329.32s tid=0x0000000132839800 nid=0x5f03 in Object.wait()  [0x000000016de76000]
+   java.lang.Thread.State: TIMED_WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.18/Native Method)
+	- waiting on <no object reference available>
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.18/Unknown Source)
+	- locked <0x0000000700002a88> (a java.lang.ref.ReferenceQueue$Lock)
+	at jdk.internal.ref.CleanerImpl.run(java.base@17.0.18/Unknown Source)
+	at java.lang.Thread.run(java.base@17.0.18/Unknown Source)
+	at jdk.internal.misc.InnocuousThread.run(java.base@17.0.18/Unknown Source)
+
+"ForkJoinPool.commonPool-worker-1" #15 daemon prio=5 os_prio=31 cpu=13894.63ms elapsed=145.49s tid=0x0000000133a85600 nid=0x6f0b runnable  [0x000000016e080000]
+   java.lang.Thread.State: RUNNABLE
+	at java.util.concurrent.ConcurrentHashMap.get(java.base@17.0.18/Unknown Source)
+	- parking to wait for  <0x000000070008dcf0> (a java.util.concurrent.ForkJoinPool)
+	at com.neuvem.java2graph.passes.SourceMemoryTypeSolver.tryToSolveType(SourceMemoryTypeSolver.java:38)
+	at com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver.tryToSolveType(CombinedTypeSolver.java:161)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.CompilationUnitContext.solveType(CompilationUnitContext.java:198)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.JavaParserTypeDeclarationAdapter.solveType(JavaParserTypeDeclarationAdapter.java:102)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.ClassOrInterfaceDeclarationContext.solveType(ClassOrInterfaceDeclarationContext.java:101)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.AbstractMethodLikeDeclarationContext.solveType(AbstractMethodLikeDeclarationContext.java:123)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.ObjectCreationContext.solveType(ObjectCreationContext.java:70)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:97)
+	at com.github.javaparser.ast.type.ClassOrInterfaceType.convertToUsage(ClassOrInterfaceType.java:345)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convertToUsage(JavaParserFacade.java:607)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:639)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:635)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.solve(JavaParserFacade.java:226)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.solve(JavaParserFacade.java:142)
+	at com.github.javaparser.symbolsolver.JavaSymbolSolver.resolveDeclaration(JavaSymbolSolver.java:182)
+	at com.github.javaparser.ast.expr.ObjectCreationExpr.resolve(ObjectCreationExpr.java:369)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:863)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.expr.ObjectCreationExpr.accept(ObjectCreationExpr.java:120)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$178(VoidVisitorAdapter.java:581)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$243/0x00000008001dfc20.accept(Unknown Source)
+	at java.util.Optional.ifPresent(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:581)
+	at com.github.javaparser.ast.body.VariableDeclarator.accept(VariableDeclarator.java:151)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$176(VoidVisitorAdapter.java:575)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$288/0x00000008001e61a0.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:575)
+	at com.github.javaparser.ast.expr.VariableDeclarationExpr.accept(VariableDeclarationExpr.java:120)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:260)
+	at com.github.javaparser.ast.stmt.ExpressionStmt.accept(ExpressionStmt.java:79)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$19(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$249/0x00000008001e0b18.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.stmt.BlockStmt.accept(BlockStmt.java:78)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$106(VoidVisitorAdapter.java:371)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$245/0x00000008001e0238.accept(Unknown Source)
+	at java.util.Optional.ifPresent(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:371)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:320)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.MethodDeclaration.accept(MethodDeclaration.java:106)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.handleTypeDeclaration(ResolvePass.java:276)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:298)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.accept(ClassOrInterfaceDeclaration.java:103)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$44(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$217/0x00000008001dc270.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.CompilationUnit.accept(CompilationUnit.java:132)
+	at com.neuvem.java2graph.passes.ResolvePass.lambda$execute$3(ResolvePass.java:43)
+	at com.neuvem.java2graph.passes.ResolvePass$$Lambda$544/0x000000080020bfb8.accept(Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.accept(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ConcurrentHashMap$ValueSpliterator.forEachRemaining(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachTask.compute(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.CountedCompleter.exec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.doExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.scan(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.runWorker(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinWorkerThread.run(java.base@17.0.18/Unknown Source)
+
+"ForkJoinPool.commonPool-worker-2" #16 daemon prio=5 os_prio=31 cpu=13764.51ms elapsed=145.49s tid=0x00000001308c0e00 nid=0x8207 runnable  [0x000000016e28c000]
+   java.lang.Thread.State: RUNNABLE
+	at java.util.jar.JarFile.match(java.base@17.0.18/Unknown Source)
+	- parking to wait for  <0x000000070008dcf0> (a java.util.concurrent.ForkJoinPool)
+	at java.util.jar.JarFile.checkForSpecialAttributes(java.base@17.0.18/Unknown Source)
+	- locked <0x00000007f24000d0> (a sun.net.www.protocol.jar.URLJarFile)
+	at java.util.jar.JarFile.isMultiRelease(java.base@17.0.18/Unknown Source)
+	at java.util.jar.JarFile.getEntry(java.base@17.0.18/Unknown Source)
+	at sun.net.www.protocol.jar.URLJarFile.getEntry(java.base@17.0.18/Unknown Source)
+	at sun.net.www.protocol.jar.JarURLConnection.connect(java.base@17.0.18/Unknown Source)
+	at sun.net.www.protocol.jar.JarURLConnection.getInputStream(java.base@17.0.18/Unknown Source)
+	at javassist.JarClassPath.openClassfile(ClassPoolTail.java:163)
+	at javassist.ClassPoolTail.openClassfile(ClassPoolTail.java:340)
+	at javassist.ClassPool.openClassfile(ClassPool.java:621)
+	at javassist.CtClassType.getClassFile3(CtClassType.java:217)
+	at javassist.CtClassType.getClassFile2(CtClassType.java:178)
+	at javassist.CtClassType.getModifiers(CtClassType.java:458)
+	at javassist.CtClassType.isAnnotation(CtClassType.java:448)
+	at com.github.javaparser.symbolsolver.javassistmodel.JavassistFactory.toTypeDeclaration(JavassistFactory.java:66)
+	at com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver.tryToSolveType(JarTypeSolver.java:265)
+	at com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver.tryToSolveType(CombinedTypeSolver.java:161)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.CompilationUnitContext.solveType(CompilationUnitContext.java:187)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.JavaParserTypeDeclarationAdapter.solveType(JavaParserTypeDeclarationAdapter.java:102)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.ClassOrInterfaceDeclarationContext.solveType(ClassOrInterfaceDeclarationContext.java:101)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.AbstractMethodLikeDeclarationContext.solveType(AbstractMethodLikeDeclarationContext.java:123)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:120)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.ObjectCreationContext.solveType(ObjectCreationContext.java:70)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:97)
+	at com.github.javaparser.ast.type.ClassOrInterfaceType.convertToUsage(ClassOrInterfaceType.java:345)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convertToUsage(JavaParserFacade.java:607)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:639)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:635)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.solve(JavaParserFacade.java:226)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.solve(JavaParserFacade.java:142)
+	at com.github.javaparser.symbolsolver.JavaSymbolSolver.resolveDeclaration(JavaSymbolSolver.java:182)
+	at com.github.javaparser.ast.expr.ObjectCreationExpr.resolve(ObjectCreationExpr.java:369)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:863)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.expr.ObjectCreationExpr.accept(ObjectCreationExpr.java:120)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$101(VoidVisitorAdapter.java:362)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$246/0x00000008001e0470.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:362)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:495)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.expr.MethodCallExpr.accept(MethodCallExpr.java:124)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:260)
+	at com.github.javaparser.ast.stmt.ExpressionStmt.accept(ExpressionStmt.java:79)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$19(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$249/0x00000008001e0b18.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.stmt.BlockStmt.accept(BlockStmt.java:78)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$106(VoidVisitorAdapter.java:371)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$245/0x00000008001e0238.accept(Unknown Source)
+	at java.util.Optional.ifPresent(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:371)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:320)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.MethodDeclaration.accept(MethodDeclaration.java:106)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.handleTypeDeclaration(ResolvePass.java:276)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:298)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.accept(ClassOrInterfaceDeclaration.java:103)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$44(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$217/0x00000008001dc270.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.CompilationUnit.accept(CompilationUnit.java:132)
+	at com.neuvem.java2graph.passes.ResolvePass.lambda$execute$3(ResolvePass.java:43)
+	at com.neuvem.java2graph.passes.ResolvePass$$Lambda$544/0x000000080020bfb8.accept(Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.accept(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ConcurrentHashMap$ValueSpliterator.forEachRemaining(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachTask.compute(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.CountedCompleter.exec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.doExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.scan(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.runWorker(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinWorkerThread.run(java.base@17.0.18/Unknown Source)
+
+"ForkJoinPool.commonPool-worker-3" #17 daemon prio=5 os_prio=31 cpu=13731.23ms elapsed=145.49s tid=0x00000001308c5600 nid=0x8307 runnable  [0x000000016ef15000]
+   java.lang.Thread.State: RUNNABLE
+	at java.util.stream.Sink$ChainedReference.cancellationRequested(java.base@17.0.18/Unknown Source)
+	- parking to wait for  <0x000000070008dcf0> (a java.util.concurrent.ForkJoinPool)
+	at java.util.stream.Sink$ChainedReference.cancellationRequested(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ReferencePipeline.forEachWithCancel(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyIntoWithCancel(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.wrapAndCopyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.FindOps$FindOp.evaluateSequential(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.evaluate(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ReferencePipeline.findFirst(java.base@17.0.18/Unknown Source)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.findDeclaredType(ResolvePass.java:783)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.resolveScopeTypeRecursive(ResolvePass.java:565)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.resolveScopeType(ResolvePass.java:541)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.deduceFqnManually(ResolvePass.java:512)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:491)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.expr.MethodCallExpr.accept(MethodCallExpr.java:124)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:260)
+	at com.github.javaparser.ast.stmt.ExpressionStmt.accept(ExpressionStmt.java:79)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$19(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$249/0x00000008001e0b18.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:109)
+	at com.github.javaparser.ast.stmt.BlockStmt.accept(BlockStmt.java:78)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$106(VoidVisitorAdapter.java:371)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$245/0x00000008001e0238.accept(Unknown Source)
+	at java.util.Optional.ifPresent(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:371)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:320)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.MethodDeclaration.accept(MethodDeclaration.java:106)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.handleTypeDeclaration(ResolvePass.java:276)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:298)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.accept(ClassOrInterfaceDeclaration.java:103)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$44(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$217/0x00000008001dc270.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.CompilationUnit.accept(CompilationUnit.java:132)
+	at com.neuvem.java2graph.passes.ResolvePass.lambda$execute$3(ResolvePass.java:43)
+	at com.neuvem.java2graph.passes.ResolvePass$$Lambda$544/0x000000080020bfb8.accept(Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.accept(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ConcurrentHashMap$ValueSpliterator.forEachRemaining(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachTask.compute(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.CountedCompleter.exec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.doExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.scan(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.runWorker(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinWorkerThread.run(java.base@17.0.18/Unknown Source)
+
+"ForkJoinPool.commonPool-worker-4" #18 daemon prio=5 os_prio=31 cpu=13598.03ms elapsed=145.49s tid=0x00000001308c5c00 nid=0x8b03 runnable  [0x000000016f121000]
+   java.lang.Thread.State: RUNNABLE
+	at com.github.javaparser.ast.Node$PreOrderIterator.next(Node.java:1073)
+	- parking to wait for  <0x000000070008dcf0> (a java.util.concurrent.ForkJoinPool)
+	at com.github.javaparser.ast.Node$PreOrderIterator.next(Node.java:1056)
+	at com.github.javaparser.ast.Node.walk(Node.java:868)
+	at com.github.javaparser.ast.Node.walk(Node.java:884)
+	at com.github.javaparser.ast.Node.findAll(Node.java:896)
+	at com.neuvem.java2graph.passes.SourceMemoryTypeSolver.tryToSolveType(SourceMemoryTypeSolver.java:41)
+	at com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver.tryToSolveType(CombinedTypeSolver.java:161)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.CompilationUnitContext.solveType(CompilationUnitContext.java:187)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.JavaParserTypeDeclarationAdapter.solveType(JavaParserTypeDeclarationAdapter.java:102)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.ClassOrInterfaceDeclarationContext.solveType(ClassOrInterfaceDeclarationContext.java:101)
+	at com.github.javaparser.resolution.Context.solveTypeInParentContext(Context.java:154)
+	at com.github.javaparser.symbolsolver.javaparsermodel.contexts.AbstractMethodLikeDeclarationContext.solveType(AbstractMethodLikeDeclarationContext.java:123)
+	at com.github.javaparser.resolution.Context.solveType(Context.java:97)
+	at com.github.javaparser.ast.type.ClassOrInterfaceType.convertToUsage(ClassOrInterfaceType.java:345)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convertToUsage(JavaParserFacade.java:607)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:639)
+	at com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.convert(JavaParserFacade.java:635)
+	at com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserParameterDeclaration.getType(JavaParserParameterDeclaration.java:68)
+	at com.github.javaparser.resolution.declarations.ResolvedParameterDeclaration.describeType(ResolvedParameterDeclaration.java:60)
+	at com.github.javaparser.resolution.declarations.ResolvedMethodLikeDeclaration.getSignature(ResolvedMethodLikeDeclaration.java:70)
+	at com.github.javaparser.resolution.declarations.ResolvedMethodLikeDeclaration.getQualifiedSignature(ResolvedMethodLikeDeclaration.java:81)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:311)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.MethodDeclaration.accept(MethodDeclaration.java:106)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.handleTypeDeclaration(ResolvePass.java:276)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:298)
+	at com.neuvem.java2graph.passes.ResolvePass$ResolverVisitor.visit(ResolvePass.java:83)
+	at com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.accept(ClassOrInterfaceDeclaration.java:103)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.lambda$visit$44(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter$$Lambda$217/0x00000008001dc270.accept(Unknown Source)
+	at java.util.ArrayList.forEach(java.base@17.0.18/Unknown Source)
+	at com.github.javaparser.ast.NodeList.forEach(NodeList.java:288)
+	at com.github.javaparser.ast.visitor.VoidVisitorAdapter.visit(VoidVisitorAdapter.java:176)
+	at com.github.javaparser.ast.CompilationUnit.accept(CompilationUnit.java:132)
+	at com.neuvem.java2graph.passes.ResolvePass.lambda$execute$3(ResolvePass.java:43)
+	at com.neuvem.java2graph.passes.ResolvePass$$Lambda$544/0x000000080020bfb8.accept(Unknown Source)
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.accept(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ConcurrentHashMap$ValueSpliterator.forEachRemaining(java.base@17.0.18/Unknown Source)
+	at java.util.stream.AbstractPipeline.copyInto(java.base@17.0.18/Unknown Source)
+	at java.util.stream.ForEachOps$ForEachTask.compute(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.CountedCompleter.exec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinTask.doExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.scan(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinPool.runWorker(java.base@17.0.18/Unknown Source)
+	at java.util.concurrent.ForkJoinWorkerThread.run(java.base@17.0.18/Unknown Source)
+
+"C2 CompilerThread1" #8 daemon prio=9 os_prio=31 cpu=6315.97ms elapsed=133.93s tid=0x00000001319ae400 nid=0x8d07 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   Compiling: 11591       4       com.github.javaparser.resolution.logic.InferenceContext::placeInferenceVariables (222 bytes)
+
+"G1 Refine#7" os_prio=31 cpu=0.03ms elapsed=144.83s tid=0x0000000131609120 nid=0xf903 runnable  
+
+"G1 Refine#6" os_prio=31 cpu=0.50ms elapsed=144.83s tid=0x0000000131607080 nid=0xfa03 runnable  
+
+"G1 Refine#5" os_prio=31 cpu=1.52ms elapsed=144.83s tid=0x00000001054059f0 nid=0xfd03 runnable  
+
+"GC Thread#8" os_prio=31 cpu=125122.45ms elapsed=144.84s tid=0x000000013302c620 nid=0xaa03 runnable  
+
+"G1 Conc#1" os_prio=31 cpu=11159.85ms elapsed=144.97s tid=0x00000001330374f0 nid=0x9803 runnable  
+
+"G1 Refine#4" os_prio=31 cpu=3.18ms elapsed=145.14s tid=0x000000013160adc0 nid=0x9a03 runnable  
+
+"G1 Refine#3" os_prio=31 cpu=10.23ms elapsed=145.14s tid=0x000000013170b070 nid=0x9b03 runnable  
+
+"G1 Refine#2" os_prio=31 cpu=16.22ms elapsed=145.25s tid=0x0000000122d070b0 nid=0x9e03 runnable  
+
+"G1 Refine#1" os_prio=31 cpu=44.85ms elapsed=145.25s tid=0x0000000122e04e40 nid=0x9303 runnable  
+
+"GC Thread#7" os_prio=31 cpu=125092.75ms elapsed=145.41s tid=0x0000000122c1dd30 nid=0xa003 runnable  
+
+"GC Thread#6" os_prio=31 cpu=125092.82ms elapsed=145.41s tid=0x0000000122c1d8b0 nid=0xa103 runnable  
+
+"GC Thread#5" os_prio=31 cpu=125109.20ms elapsed=329.08s tid=0x0000000122c13a00 nid=0xa403 runnable  
+
+"GC Thread#4" os_prio=31 cpu=125192.52ms elapsed=329.08s tid=0x0000000122c13580 nid=0x8603 runnable  
+
+"GC Thread#3" os_prio=31 cpu=125138.26ms elapsed=329.08s tid=0x0000000122c13100 nid=0xa503 runnable  
+
+"GC Thread#2" os_prio=31 cpu=125137.51ms elapsed=329.08s tid=0x00000001330291a0 nid=0xa703 runnable  
+
+"GC Thread#1" os_prio=31 cpu=125137.92ms elapsed=329.08s tid=0x0000000133028d20 nid=0xa803 runnable  
+
+"VM Periodic Task Thread" os_prio=31 cpu=72.95ms elapsed=329.32s tid=0x0000000133022090 nid=0x6103 waiting on condition  
+
+"VM Thread" os_prio=31 cpu=758.83ms elapsed=329.34s tid=0x000000013310b8c0 nid=0x4e03 runnable  
+
+"G1 Service" os_prio=31 cpu=19.04ms elapsed=329.35s tid=0x0000000133109990 nid=0x5103 runnable  
+
+"G1 Refine#0" os_prio=31 cpu=88.10ms elapsed=329.35s tid=0x00000001331090f0 nid=0x5303 runnable  
+
+"G1 Conc#0" os_prio=31 cpu=11156.97ms elapsed=329.35s tid=0x0000000133106fc0 nid=0x3a03 runnable  
+
+"G1 Main Marker" os_prio=31 cpu=5.38ms elapsed=329.35s tid=0x0000000133106730 nid=0x3703 runnable  
+
+"GC Thread#0" os_prio=31 cpu=125179.36ms elapsed=329.35s tid=0x0000000133106080 nid=0x3c03 runnable  
+
+JNI global refs: 13, weak refs: 75
+
+Heap
+ garbage-first heap   total 4194304K, used 4190729K [0x0000000700000000, 0x0000000800000000)
+  region size 2048K, 1 young (2048K), 0 survivors (0K)
+ Metaspace       used 25630K, committed 25792K, reserved 1114112K
+  class space    used 2861K, committed 2944K, reserved 1048576K

@@ -104,6 +104,19 @@ public class ExportPass implements Pass {
     }
 
     private void exportLadybug(Path dbPath, GraphContext context) {
+        // Drop existing database directory to prevent appending duplicate edges 
+        // to relationship tables across multiple parser runs.
+        if (Files.exists(dbPath)) {
+            try {
+                Files.walk(dbPath)
+                     .sorted(java.util.Comparator.reverseOrder())
+                     .map(Path::toFile)
+                     .forEach(java.io.File::delete);
+            } catch (IOException e) {
+                System.err.println("Warning: Could not clear existing database directory: " + e.getMessage());
+            }
+        }
+
         try (Database db = new Database(dbPath.toString());
              Connection conn = new Connection(db)) {
 

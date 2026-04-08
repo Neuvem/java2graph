@@ -27,13 +27,34 @@ public class ResolvePass implements Pass {
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
         System.out.println("Resolving ASTs with Advanced Symbol Resolution...");
 
-        context.compilationUnits.values().parallelStream().forEach(cu -> {
+        int totalUnits = context.compilationUnits.size();
+        java.util.concurrent.atomic.AtomicInteger resolvedCount = new java.util.concurrent.atomic.AtomicInteger();
+
+        System.out.println("  Building local AST registry to accelerate heuristics...");
+        Map<String, TypeDeclaration<?>> classAstIndex = new ConcurrentHashMap<>();
+        context.compilationUnits.values().stream().forEach(cu -> {
+            cu.findAll(TypeDeclaration.class).forEach(td -> {
+                td.getFullyQualifiedName().ifPresent(fqn -> classAstIndex.put((String) fqn, td));
+            });
+        });
+
+        context.compilationUnits.values().stream().forEach(cu -> {
             try {
-                cu.accept(new ResolverVisitor(context, cu), null);
+                cu.accept(new ResolverVisitor(context, config, classAstIndex, cu), null);
             } catch (Throwable e) {
                 System.err.println("Failed to resolve compilation unit: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 if (e.getMessage() == null) {
                     e.printStackTrace();
+                }
+            } finally {
+                // EXTREMELY CRITICAL FOR 12,000+ FILES
+                // Wipe the global JavaParserFacade WeakHashMap token cache after every file
+                // to prevent non-stop memory explosion and Lock Contention!
+                com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.clearInstances();
+
+                int count = resolvedCount.incrementAndGet();
+                if (count % 500 == 0 || count == totalUnits) {
+                    System.out.println(String.format("  Progress: %d / %d compilation units resolved (%.1f%%)", count, totalUnits, (count * 100.0) / totalUnits));
                 }
             }
         });
@@ -66,6 +87,8 @@ public class ResolvePass implements Pass {
 
     private static class ResolverVisitor extends VoidVisitorAdapter<Void> {
         private final GraphContext context;
+        private final Java2GraphConfig config;
+        private final Map<String, TypeDeclaration<?>> classAstIndex;
         /** Simple-name → FQN map for types. */
         private final Map<String, String> importMap;
         /** Method-name → Class FQN map for static method imports. */
@@ -82,8 +105,10 @@ public class ResolvePass implements Pass {
         /** Counter for lambda numbering within each class. */
         private int lambdaCounter = 0;
 
-        public ResolverVisitor(GraphContext context, CompilationUnit cu) {
+        public ResolverVisitor(GraphContext context, Java2GraphConfig config, Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu) {
             this.context = context;
+            this.config = config;
+            this.classAstIndex = classAstIndex;
             String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
             Map<String, Map<String, String>> imports = buildImportMaps(cu, pkg);
             this.importMap = imports.get("types");
@@ -204,7 +229,7 @@ public class ResolvePass implements Pass {
             final String finalFqn = fqn;
             context.classes.put(finalFqn, ClassNode.builder()
                     .id(finalFqn).fqn(finalFqn).name(n.getNameAsString())
-                    .isInterface(isInterface).declarationCode(n.toString()).build());
+                    .isInterface(isInterface).declarationCode(getSourceCode(n)).build());
 
             String prevClassFqn = currentClassFqn;
             currentClassFqn = finalFqn;
@@ -294,7 +319,7 @@ public class ResolvePass implements Pass {
             }
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(n.toString()).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -311,7 +336,7 @@ public class ResolvePass implements Pass {
             }
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(n.toString()).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
 
@@ -331,7 +356,7 @@ public class ResolvePass implements Pass {
                     + "$" + n.getBegin().map(p -> p.line).orElse(0);
             context.methods.put(fqn, MethodNode.builder().id(fqn).fqn(fqn)
                     .name(n.isStatic() ? "<clinit>" : "<init>").signature("()")
-                    .sourceCode(n.toString()).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -371,7 +396,7 @@ public class ResolvePass implements Pass {
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
                 context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name(n.getNameAsString()).isInterface(false).declarationCode(n.toString()).build());
+                        .name(n.getNameAsString()).isInterface(false).declarationCode(getSourceCode(n)).build());
                 n.getClassBody().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
             }
@@ -392,13 +417,15 @@ public class ResolvePass implements Pass {
 
             // Try to resolve the functional interface this lambda implements
             String functionalInterface = null;
-            try {
-                ResolvedType rt = n.calculateResolvedType();
-                String desc = rt.describe();
-                if (!desc.startsWith("?")) {
-                    functionalInterface = desc;
-                }
-            } catch (Exception ignored) { /* fall through */ }
+            if (!config.isFastResolve()) {
+                try {
+                    ResolvedType rt = n.calculateResolvedType();
+                    String desc = rt.describe();
+                    if (!desc.startsWith("?")) {
+                        functionalInterface = desc;
+                    }
+                } catch (Throwable ignored) { /* fall through */ }
+            }
 
             // Build a Joern-style lambda FQN: enclosingClass.<lambda>N()
             String lambdaFqn = currentClassFqn + ".<lambda>" + idx + "()";
@@ -408,7 +435,7 @@ public class ResolvePass implements Pass {
                     .id(lambdaFqn).fqn(lambdaFqn)
                     .name("<lambda>" + idx + "()")
                     .signature("()")
-                    .sourceCode(n.toString())
+                    .sourceCode(getSourceCode(n))
                     .containingClassFqn(currentClassFqn)
                     .isLambda(true)
                     .build());
@@ -440,24 +467,32 @@ public class ResolvePass implements Pass {
         public void visit(MethodCallExpr n, Void arg) {
             if (currentMethodFqn != null) {
                 String calledFqn = null;
-                try {
-                    // Primary: full symbol resolution
-                    ResolvedMethodDeclaration resolved = n.resolve();
-                    calledFqn = resolved.getQualifiedSignature();
+                boolean resolvedViaSolver = false;
+                
+                if (!config.isFastResolve()) {
+                    try {
+                        // Primary: full symbol resolution
+                        ResolvedMethodDeclaration resolved = n.resolve();
+                        calledFqn = resolved.getQualifiedSignature();
 
-                    // IMPROVEMENT: Prefer receiver type for inherited methods (parity with Joern)
-                    if (n.getScope().isPresent()) {
-                        String scopeType = resolveScopeType(n.getScope().get());
-                        if (scopeType != null && !scopeType.isBlank() && !scopeType.equals("UNKNOWN")) {
-                            // Extract signature and method name, then re-prefix with scope type
-                            String signature = calledFqn.contains("(") ? calledFqn.substring(calledFqn.indexOf('(')) : "()";
-                            String methodName = resolved.getName();
-                            calledFqn = scopeType + "." + methodName + signature;
+                        // IMPROVEMENT: Prefer receiver type for inherited methods (parity with Joern)
+                        if (n.getScope().isPresent()) {
+                            String scopeType = resolveScopeType(n.getScope().get());
+                            if (scopeType != null && !scopeType.isBlank() && !scopeType.equals("UNKNOWN")) {
+                                // Extract signature and method name, then re-prefix with scope type
+                                String signature = calledFqn.contains("(") ? calledFqn.substring(calledFqn.indexOf('(')) : "()";
+                                String methodName = resolved.getName();
+                                calledFqn = scopeType + "." + methodName + signature;
+                            }
                         }
+                        resolvedViaSolver = true;
+                    } catch (Throwable e) {
+                        // Secondary: try to resolve just the scope type, or fall back
+                        // to <unresolvedNamespace>.methodName(N) matching Joern's convention
                     }
-                } catch (RuntimeException e) {
-                    // Secondary: try to resolve just the scope type, or fall back
-                    // to <unresolvedNamespace>.methodName(N) matching Joern's convention
+                }
+                
+                if (!resolvedViaSolver) {
                     calledFqn = deduceFqnManually(n);
                 }
                 addCall(calledFqn);
@@ -525,25 +560,7 @@ public class ResolvePass implements Pass {
                 return qualify(stripGenerics(unwrapped.asCastExpr().getType().asString()));
             }
 
-            // Symbol-solver type resolution
-            try {
-                ResolvedType rt = unwrapped.calculateResolvedType();
-                String desc = stripGenerics(rt.describe());
-                if (!desc.startsWith("?")) return desc;
-            } catch (Exception ignored) { /* fall through */ }
-
-            // Array index access → try to resolve the element type
-            if (unwrapped.isArrayAccessExpr()) {
-                try {
-                    ResolvedType arrType = unwrapped.asArrayAccessExpr()
-                            .getName().calculateResolvedType();
-                    if (arrType.isArray()) {
-                        String comp = stripGenerics(arrType.asArrayType().getComponentType().describe());
-                        if (!comp.startsWith("?")) return comp;
-                    }
-                } catch (Exception ignored) { /* fall through */ }
-            }
-
+            // --- FAST PATH: AST Heuristics First ---
             // NameExpr → try import-map qualification first, then AST var-decl lookup
             if (unwrapped.isNameExpr()) {
                 String name = unwrapped.asNameExpr().getNameAsString();
@@ -552,41 +569,6 @@ public class ResolvePass implements Pass {
 
                 String declaredType = findDeclaredType(unwrapped.asNameExpr());
                 if (declaredType != null) return qualify(declaredType);
-            }
-
-            // FieldAccessExpr (e.g. obj.field or Class.FIELD)
-            if (unwrapped.isFieldAccessExpr()) {
-                FieldAccessExpr fae = unwrapped.asFieldAccessExpr();
-                String scopeType = resolveScopeTypeRecursive(fae.getScope(), depth + 1);
-                if (scopeType != null) {
-                    // Guess: handle ClassName.CONSTANT
-                    return scopeType + "." + fae.getNameAsString();
-                }
-            }
-
-            // MethodCallExpr scope (e.g. getContext().getConfiguration())
-            if (unwrapped.isMethodCallExpr()) {
-                MethodCallExpr mce = unwrapped.asMethodCallExpr();
-                try {
-                    ResolvedMethodDeclaration scopeMethod = mce.resolve();
-                    String returnType = stripGenerics(scopeMethod.getReturnType().describe());
-                    if (!returnType.startsWith("?") && !"void".equals(returnType)) {
-                        return returnType;
-                    }
-                } catch (Exception e) {
-                    // Heuristic fallback for method chains
-                    String mName = mce.getNameAsString();
-                    String guessed = guessReturnType(mName);
-                    if (guessed != null) return guessed;
-
-                    // Recursive heuristic: deduce the method's FQN and check our graph
-                    String deduced = deduceFqnManually(mce);
-                    MethodNode mn = context.methods.get(deduced);
-                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
-                        // We found the method in our source! But we don't store return type in MethodNode yet.
-                        // Future: store returnType in MethodNode.
-                    }
-                }
             }
 
             // ObjectCreationExpr (e.g. new Foo().method()) → type is Foo
@@ -605,6 +587,74 @@ public class ResolvePass implements Pass {
                         .findFirst().orElse(null);
             }
 
+            // FieldAccessExpr purely heuristic (fast)
+            if (unwrapped.isFieldAccessExpr()) {
+                FieldAccessExpr fae = unwrapped.asFieldAccessExpr();
+                String scopeType = resolveScopeTypeRecursive(fae.getScope(), depth + 1);
+                if (scopeType != null) {
+                    return scopeType + "." + fae.getNameAsString();
+                }
+            }
+
+            // In pure fast-resolve mode, we stop here (skip JavaSymbolSolver).
+            if (config.isFastResolve()) {
+                if (unwrapped.isMethodCallExpr()) {
+                    MethodCallExpr mce = unwrapped.asMethodCallExpr();
+                    String guessed = guessReturnType(mce.getNameAsString());
+                    if (guessed != null) return guessed;
+                    
+                    String deduced = deduceFqnManually(mce);
+                    MethodNode mn = context.methods.get(deduced);
+                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
+                        // Advanced heuristic for fast-path: we could use method registry if available
+                    }
+                }
+                return null;
+            }
+
+            // --- SLOW PATH: JavaSymbolSolver ---
+            // Symbol-solver type resolution
+            try {
+                ResolvedType rt = unwrapped.calculateResolvedType();
+                String desc = stripGenerics(rt.describe());
+                if (!desc.startsWith("?")) return desc;
+            } catch (Throwable ignored) { /* fall through */ }
+
+            // Array index access → try to resolve the element type
+            if (unwrapped.isArrayAccessExpr()) {
+                try {
+                    ResolvedType arrType = unwrapped.asArrayAccessExpr()
+                            .getName().calculateResolvedType();
+                    if (arrType.isArray()) {
+                        String comp = stripGenerics(arrType.asArrayType().getComponentType().describe());
+                        if (!comp.startsWith("?")) return comp;
+                    }
+                } catch (Throwable ignored) { /* fall through */ }
+            }
+
+            // MethodCallExpr scope (e.g. getContext().getConfiguration())
+            if (unwrapped.isMethodCallExpr()) {
+                MethodCallExpr mce = unwrapped.asMethodCallExpr();
+                try {
+                    ResolvedMethodDeclaration scopeMethod = mce.resolve();
+                    String returnType = stripGenerics(scopeMethod.getReturnType().describe());
+                    if (!returnType.startsWith("?") && !"void".equals(returnType)) {
+                        return returnType;
+                    }
+                } catch (Throwable e) {
+                    // Heuristic fallback for method chains
+                    String mName = mce.getNameAsString();
+                    String guessed = guessReturnType(mName);
+                    if (guessed != null) return guessed;
+
+                    // Recursive heuristic: deduce the method's FQN and check our graph
+                    String deduced = deduceFqnManually(mce);
+                    MethodNode mn = context.methods.get(deduced);
+                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
+                        // Future: store returnType in MethodNode.
+                    }
+                }
+            }
 
             return null;
         }
@@ -746,16 +796,13 @@ public class ResolvePass implements Pass {
         }
 
         private String searchClassForField(String classFqn, String varName) {
-            // Check compilation units for the class FQN and its fields
-            for (CompilationUnit cu : context.compilationUnits.values()) {
-                for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
-                    if (classFqn.equals(td.getFullyQualifiedName().orElse(""))) {
-                        for (FieldDeclaration fd : td.getFields()) {
-                            for (VariableDeclarator vd : fd.getVariables()) {
-                                if (vd.getNameAsString().equals(varName)) {
-                                    return stripGenerics(vd.getTypeAsString());
-                                }
-                            }
+            // O(1) Instant AST Lookup
+            TypeDeclaration<?> td = classAstIndex.get(classFqn);
+            if (td != null) {
+                for (FieldDeclaration fd : td.getFields()) {
+                    for (VariableDeclarator vd : fd.getVariables()) {
+                        if (vd.getNameAsString().equals(varName)) {
+                            return stripGenerics(vd.getTypeAsString());
                         }
                     }
                 }
@@ -782,12 +829,9 @@ public class ResolvePass implements Pass {
          * the given name and return its declared type.
          */
         private String searchBodyForVar(com.github.javaparser.ast.Node bodyNode, String varName) {
-            for (VariableDeclarator vd : bodyNode.findAll(VariableDeclarator.class)) {
-                if (vd.getNameAsString().equals(varName)) {
-                    return stripGenerics(vd.getTypeAsString());
-                }
-            }
-            return null;
+            return bodyNode.findFirst(VariableDeclarator.class, vd -> vd.getNameAsString().equals(varName))
+                    .map(vd -> stripGenerics(vd.getTypeAsString()))
+                    .orElse(null);
         }
 
         /**
@@ -811,6 +855,10 @@ public class ResolvePass implements Pass {
         // ──────────────────────────────────────────────────────────────────────
         //  Object creation
         // ──────────────────────────────────────────────────────────────────────
+
+        private String getSourceCode(com.github.javaparser.ast.Node node) {
+            return node.getTokenRange().map(Object::toString).orElse("");
+        }
 
         @Override
         public void visit(ObjectCreationExpr n, Void arg) {
@@ -841,7 +889,7 @@ public class ResolvePass implements Pass {
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
                 context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name("$anon").isInterface(false).declarationCode(n.toString()).build());
+                        .name("$anon").isInterface(false).declarationCode(getSourceCode(n)).build());
                 n.getAnonymousClassBody().get().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
             } else {

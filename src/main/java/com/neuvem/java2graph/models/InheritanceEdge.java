@@ -25,4 +25,19 @@ public class InheritanceEdge {
         public Builder type(String type) { edge.type = type; return this; }
         public InheritanceEdge build() { return edge; }
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        InheritanceEdge that = (InheritanceEdge) o;
+        return java.util.Objects.equals(childFqn, that.childFqn) &&
+               java.util.Objects.equals(parentFqn, that.parentFqn) &&
+               java.util.Objects.equals(type, that.type);
+    }
+
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(childFqn, parentFqn, type);
+    }
 }

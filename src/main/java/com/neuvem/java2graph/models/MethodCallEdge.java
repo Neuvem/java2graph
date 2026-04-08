@@ -20,4 +20,18 @@ public class MethodCallEdge {
         public Builder calledMethodFqn(String calledMethodFqn) { edge.calledMethodFqn = calledMethodFqn; return this; }
         public MethodCallEdge build() { return edge; }
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        MethodCallEdge that = (MethodCallEdge) o;
+        return java.util.Objects.equals(callerMethodFqn, that.callerMethodFqn) &&
+               java.util.Objects.equals(calledMethodFqn, that.calledMethodFqn);
+    }
+
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(callerMethodFqn, calledMethodFqn);
+    }
 }

@@ -29,6 +29,9 @@ public class Main implements Callable<Integer> {
     @Option(names = {"-l", "--lombok"}, description = "Enable Lombok processing", defaultValue = "false")
     private boolean enableLombok;
 
+    @Option(names = {"-f", "--fast"}, description = "Use fast AST heuristic resolution instead of exact symbol solver", defaultValue = "false")
+    private boolean fastResolve;
+
     @Option(names = {"-t", "--threads"}, description = "Number of threads for parallel processing", defaultValue = "4")
     private int threads;
 
@@ -49,6 +52,7 @@ public class Main implements Callable<Integer> {
                 .outCsvDir(outCsvDir)
                 .outDbPath(outDbPath)
                 .enableLombok(enableLombok)
+                .fastResolve(fastResolve)
                 .threads(threads)
                 .build();
 
