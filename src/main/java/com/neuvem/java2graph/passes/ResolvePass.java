@@ -25,42 +25,16 @@ public class ResolvePass implements Pass {
 
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
-        System.out.println("Resolving ASTs with Advanced Symbol Resolution...");
+        // In the streaming architecture, parse+resolve is fused inside ParsePass.
+        // This pass is kept as a no-op for backward compatibility and test usage.
+        // For standalone usage (e.g., tests), call addStubNodes() after resolving.
+    }
 
-        int totalUnits = context.compilationUnits.size();
-        java.util.concurrent.atomic.AtomicInteger resolvedCount = new java.util.concurrent.atomic.AtomicInteger();
-
-        System.out.println("  Building local AST registry to accelerate heuristics...");
-        Map<String, TypeDeclaration<?>> classAstIndex = new ConcurrentHashMap<>();
-        context.compilationUnits.values().stream().forEach(cu -> {
-            cu.findAll(TypeDeclaration.class).forEach(td -> {
-                td.getFullyQualifiedName().ifPresent(fqn -> classAstIndex.put((String) fqn, td));
-            });
-        });
-
-        context.compilationUnits.values().stream().forEach(cu -> {
-            try {
-                cu.accept(new ResolverVisitor(context, config, classAstIndex, cu), null);
-            } catch (Throwable e) {
-                System.err.println("Failed to resolve compilation unit: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                if (e.getMessage() == null) {
-                    e.printStackTrace();
-                }
-            } finally {
-                // EXTREMELY CRITICAL FOR 12,000+ FILES
-                // Wipe the global JavaParserFacade WeakHashMap token cache after every file
-                // to prevent non-stop memory explosion and Lock Contention!
-                com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.clearInstances();
-
-                int count = resolvedCount.incrementAndGet();
-                if (count % 500 == 0 || count == totalUnits) {
-                    System.out.println(String.format("  Progress: %d / %d compilation units resolved (%.1f%%)", count, totalUnits, (count * 100.0) / totalUnits));
-                }
-            }
-        });
-
-        System.out.println("Adding stub nodes for external references...");
-        
+    /**
+     * Add stub/placeholder nodes for any FQNs referenced in edges but not yet
+     * registered as explicit ClassNode or MethodNode entries.
+     */
+    public static void addStubNodes(GraphContext context) {
         context.inheritanceEdges.forEach(edge -> {
             if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank()) {
                 context.classes.computeIfAbsent(edge.getChildFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
@@ -78,14 +52,9 @@ public class ResolvePass implements Pass {
                 context.methods.computeIfAbsent(edge.getCalledMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
             }
         });
-
-        System.out.println("Finished resolving. Classes: " + context.classes.size() +
-                ", Methods: " + context.methods.size() +
-                ", Inheritances: " + context.inheritanceEdges.size() +
-                ", Calls: " + context.callEdges.size());
     }
 
-    private static class ResolverVisitor extends VoidVisitorAdapter<Void> {
+    static class ResolverVisitor extends VoidVisitorAdapter<Void> {
         private final GraphContext context;
         private final Java2GraphConfig config;
         private final Map<String, TypeDeclaration<?>> classAstIndex;
@@ -98,6 +67,8 @@ public class ResolvePass implements Pass {
         /** List of static star-import class FQNs (e.g. "org.junit.Assert"). */
         private final List<String> staticStarImports;
 
+        private final CompilationUnit cu;
+        private final String filePath;
         private String currentClassFqn = null;
         private String currentMethodFqn = null;
         /** Dedup set to avoid adding the same caller→callee edge multiple times. */
@@ -105,10 +76,12 @@ public class ResolvePass implements Pass {
         /** Counter for lambda numbering within each class. */
         private int lambdaCounter = 0;
 
-        public ResolverVisitor(GraphContext context, Java2GraphConfig config, Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu) {
+        public ResolverVisitor(GraphContext context, Java2GraphConfig config, Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu, String filePath) {
             this.context = context;
             this.config = config;
             this.classAstIndex = classAstIndex;
+            this.cu = cu;
+            this.filePath = filePath;
             String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
             Map<String, Map<String, String>> imports = buildImportMaps(cu, pkg);
             this.importMap = imports.get("types");
@@ -229,7 +202,7 @@ public class ResolvePass implements Pass {
             final String finalFqn = fqn;
             context.classes.put(finalFqn, ClassNode.builder()
                     .id(finalFqn).fqn(finalFqn).name(n.getNameAsString())
-                    .isInterface(isInterface).declarationCode(getSourceCode(n)).build());
+                    .isInterface(isInterface).declarationCode(getSourceCode(n)).filePath(filePath).build());
 
             String prevClassFqn = currentClassFqn;
             currentClassFqn = finalFqn;
@@ -254,7 +227,7 @@ public class ResolvePass implements Pass {
                     context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                             .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
                             .signature("()").sourceCode("// synthetic default constructor")
-                            .containingClassFqn(finalFqn).isLambda(false).build());
+                            .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
                 }
             } else if (n instanceof EnumDeclaration) {
                 // Enum always has a synthetic constructor
@@ -262,7 +235,7 @@ public class ResolvePass implements Pass {
                 context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                         .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
                         .signature("()").sourceCode("// synthetic enum constructor")
-                        .containingClassFqn(finalFqn).isLambda(false).build());
+                        .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
             } else if (n instanceof RecordDeclaration) {
                 // Record has a canonical constructor with its components as params
                 RecordDeclaration rd = (RecordDeclaration) n;
@@ -273,7 +246,7 @@ public class ResolvePass implements Pass {
                     context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                             .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
                             .signature("(" + paramCount + ")").sourceCode("// synthetic record constructor")
-                            .containingClassFqn(finalFqn).isLambda(false).build());
+                            .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
                 }
             }
 
@@ -319,7 +292,7 @@ public class ResolvePass implements Pass {
             }
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -336,7 +309,7 @@ public class ResolvePass implements Pass {
             }
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
 
@@ -356,7 +329,7 @@ public class ResolvePass implements Pass {
                     + "$" + n.getBegin().map(p -> p.line).orElse(0);
             context.methods.put(fqn, MethodNode.builder().id(fqn).fqn(fqn)
                     .name(n.isStatic() ? "<clinit>" : "<init>").signature("()")
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).build());
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -376,7 +349,7 @@ public class ResolvePass implements Pass {
                     .signature("()")
                     .sourceCode("// field initializers")
                     .containingClassFqn(currentClassFqn)
-                    .isLambda(false).build());
+                    .isLambda(false).filePath(filePath).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -396,7 +369,7 @@ public class ResolvePass implements Pass {
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
                 context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name(n.getNameAsString()).isInterface(false).declarationCode(getSourceCode(n)).build());
+                        .name(n.getNameAsString()).isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
                 n.getClassBody().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
             }
@@ -889,7 +862,7 @@ public class ResolvePass implements Pass {
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
                 context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name("$anon").isInterface(false).declarationCode(getSourceCode(n)).build());
+                        .name("$anon").isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
                 n.getAnonymousClassBody().get().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
             } else {

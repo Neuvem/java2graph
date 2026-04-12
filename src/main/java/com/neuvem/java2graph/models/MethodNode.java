@@ -8,6 +8,7 @@ public class MethodNode {
     private String sourceCode;
     private String containingClassFqn;
     private boolean isLambda;
+    private String filePath;
 
     public MethodNode() {}
 
@@ -32,6 +33,9 @@ public class MethodNode {
     public boolean isLambda() { return isLambda; }
     public void setLambda(boolean isLambda) { this.isLambda = isLambda; }
 
+    public String getFilePath() { return filePath; }
+    public void setFilePath(String filePath) { this.filePath = filePath; }
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
@@ -43,6 +47,7 @@ public class MethodNode {
         public Builder sourceCode(String sourceCode) { node.sourceCode = sourceCode; return this; }
         public Builder containingClassFqn(String containingClassFqn) { node.containingClassFqn = containingClassFqn; return this; }
         public Builder isLambda(boolean isLambda) { node.isLambda = isLambda; return this; }
+        public Builder filePath(String filePath) { node.filePath = filePath; return this; }
         public MethodNode build() { return node; }
     }
 }

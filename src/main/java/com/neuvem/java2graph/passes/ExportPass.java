@@ -47,10 +47,10 @@ public class ExportPass implements Pass {
 
     private void exportClassesCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("classes.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "isInterface", "declarationCode"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "isInterface", "declarationCode", "filePath"))) {
             for (ClassNode node : context.classes.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode(), node.getFilePath());
                 }
             }
         }
@@ -58,10 +58,10 @@ public class ExportPass implements Pass {
 
     private void exportMethodsCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("methods.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "signature", "sourceCode", "containingClassFqn", "isLambda"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "signature", "sourceCode", "containingClassFqn", "isLambda", "filePath"))) {
             for (MethodNode node : context.methods.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.getContainingClassFqn(), node.isLambda());
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.getContainingClassFqn(), node.isLambda(), node.getFilePath());
                 }
             }
         }
@@ -121,8 +121,8 @@ public class ExportPass implements Pass {
              Connection conn = new Connection(db)) {
 
             // Schema
-            executeOrThrow(conn, "CREATE NODE TABLE Class(id STRING, fqn STRING, name STRING, isInterface BOOLEAN, declarationCode STRING, PRIMARY KEY (id))");
-            executeOrThrow(conn, "CREATE NODE TABLE Method(id STRING, fqn STRING, name STRING, signature STRING, sourceCode STRING, isLambda BOOLEAN, PRIMARY KEY (id))");
+            executeOrThrow(conn, "CREATE NODE TABLE Class(id STRING, fqn STRING, name STRING, isInterface BOOLEAN, declarationCode STRING, filePath STRING, PRIMARY KEY (id))");
+            executeOrThrow(conn, "CREATE NODE TABLE Method(id STRING, fqn STRING, name STRING, signature STRING, sourceCode STRING, isLambda BOOLEAN, filePath STRING, PRIMARY KEY (id))");
 
             executeOrThrow(conn, "CREATE REL TABLE Extends(FROM Class TO Class)");
             executeOrThrow(conn, "CREATE REL TABLE Implements(FROM Class TO Class)");
@@ -137,7 +137,7 @@ public class ExportPass implements Pass {
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (ClassNode node : context.classes.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode());
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode(), node.getFilePath());
                     }
                 }
             }
@@ -147,7 +147,7 @@ public class ExportPass implements Pass {
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (MethodNode node : context.methods.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.isLambda());
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.isLambda(), node.getFilePath());
                     }
                 }
             }

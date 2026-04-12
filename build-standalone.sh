@@ -5,8 +5,9 @@ echo "Building standalone application..."
 mvn clean package -DskipTests
 
 echo "Finding required JDK modules..."
-MODULES=$(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base,java.compiler,java.desktop,java.instrument,java.management,java.sql,jdk.attach,jdk.jdi,jdk.unsupported")
-MODULES="${MODULES},java.logging,jdk.compiler,jdk.zipfs"
+# Always include java.sql and other key modules, then append jdeps results
+MODULES=$(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base")
+MODULES="${MODULES},java.sql,java.compiler,java.desktop,java.instrument,java.management,java.logging,jdk.attach,jdk.jdi,jdk.unsupported,jdk.compiler,jdk.zipfs"
 echo "Modules required: $MODULES"
 
 rm -rf custom-jre dist

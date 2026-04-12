@@ -32,16 +32,17 @@ jobs:
     - name: Get JDK Modules (Linux/macOS)
       if: runner.os != 'Windows'
       run: |
-        MODULES=$(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base,java.compiler,java.desktop,java.instrument,java.management,java.sql,jdk.attach,jdk.jdi,jdk.unsupported")
-        echo "MODULES=${MODULES},java.logging,jdk.compiler,jdk.zipfs" >> $GITHUB_ENV
+        # Use jdeps for app dependencies, but always force core modules like java.sql
+        JD_MODULES=$(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar || echo "java.base")
+        echo "MODULES=${JD_MODULES},java.sql,java.compiler,java.desktop,java.instrument,java.management,java.logging,jdk.attach,jdk.jdi,jdk.unsupported,jdk.compiler,jdk.zipfs" >> $GITHUB_ENV
       shell: bash
 
     - name: Get JDK Modules (Windows)
       if: runner.os == 'Windows'
       run: |
-        $MODULES = $(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar)
-        if (-not $MODULES) { $MODULES = "java.base,java.compiler,java.desktop,java.instrument,java.management,java.sql,jdk.attach,jdk.jdi,jdk.unsupported" }
-        echo "MODULES=${MODULES},java.logging,jdk.compiler,jdk.zipfs" >> $env:GITHUB_ENV
+        $JD_MODULES = $(jdeps --ignore-missing-deps -q --multi-release 17 --print-module-deps target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar)
+        if (-not $JD_MODULES) { $JD_MODULES = "java.base" }
+        echo "MODULES=${JD_MODULES},java.sql,java.compiler,java.desktop,java.instrument,java.management,java.logging,jdk.attach,jdk.jdi,jdk.unsupported,jdk.compiler,jdk.zipfs" >> $env:GITHUB_ENV
 
     - name: Create minimal JRE with jlink
       run: |

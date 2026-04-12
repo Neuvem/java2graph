@@ -11,7 +11,8 @@ import com.neuvem.java2graph.models.GraphContext;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
-import java.util.Optional;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,22 +40,30 @@ class SyntheticParseTest {
 
         GraphContext context = new GraphContext();
 
-        // Pass 1: Parse
+        // Parse the synthetic code
         ParserConfiguration parserConfig = new ParserConfiguration();
         parserConfig.setStoreTokens(true);
         JavaParser javaParser = new JavaParser(parserConfig);
 
         ParseResult<CompilationUnit> result = javaParser.parse(javaCode);
         CompilationUnit cu = result.getResult().orElseThrow();
-        context.compilationUnits.put("com/example/Processor.java", cu);
 
-        // Pass 2: Resolve (Mocking the pipeline)
-        ResolvePass resolvePass = new ResolvePass();
-        resolvePass.execute(config, context);
+        // Build classAstIndex for the ResolverVisitor
+        Map<String, TypeDeclaration<?>> classAstIndex = new HashMap<>();
+        cu.findAll(TypeDeclaration.class).forEach(td -> {
+            ((TypeDeclaration<?>) td).getFullyQualifiedName()
+                    .ifPresent(fqn -> classAstIndex.put(fqn, (TypeDeclaration<?>) td));
+        });
+
+        // Directly invoke the ResolverVisitor (streaming-style, like ParsePass does)
+        cu.accept(new ResolvePass.ResolverVisitor(context, config, classAstIndex, cu, "com/example/Processor.java"), null);
+
+        // Add stub nodes (like ParsePass does after streaming)
+        ResolvePass.addStubNodes(context);
 
         // Validations
         assertThat(context.classes).containsKey("com.example.Processor");
-        
+
         ClassNode processorNode = context.classes.get("com.example.Processor");
         assertThat(processorNode.isInterface()).isFalse();
 

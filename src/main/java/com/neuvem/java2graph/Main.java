@@ -61,7 +61,7 @@ public class Main implements Callable<Integer> {
         Pass[] passes = {
                 new DelombokPass(),
                 new ParsePass(),
-                new ResolvePass(),
+                // ResolvePass is now fused into ParsePass's streaming loop
                 new ExportPass()
         };
 

@@ -1,11 +1,8 @@
 package com.neuvem.java2graph.models;
 
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import com.github.javaparser.ast.CompilationUnit;
 
 public class GraphContext {
-    public final ConcurrentHashMap<String, CompilationUnit> compilationUnits = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<String, ClassNode> classes = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<String, MethodNode> methods = new ConcurrentHashMap<>();
     
