@@ -50,22 +50,27 @@ You can also download precompiled binaries directly from the [Ladybug Releases](
 
 If using the compiled `.jar`:
 ```bash
-java -jar target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar -s <path_to_source> -o <output_db_dir> [-l] [--fast]
+java -jar target/java2graph-1.0-SNAPSHOT-jar-with-dependencies.jar -s <path_to_source> -d <output_db_dir> [OPTIONS]
 ```
 
 If using the Standalone App Image:
 ```bash
-./dist/java2graph/java2graph -s <path_to_source> -o <output_db_dir> [-l] [--fast]
+./dist/java2graph/java2graph -s <path_to_source> -d <output_db_dir> [OPTIONS]
 ```
 
 ### Options
 
-| Flag | Name | Description |
-|---|---|---|
-| `-s`, `--source` | Source Directory | The absolute path to the Java project you want to parse. |
-| `-o`, `--out` | Output Database | The path where the Ladybug `.db` database directory should be generated. |
-| `-l`, `--lombok` | Enable Lombok | If provided, invokes `delombok` across all detected source roots before parsing. |
-| `--fast` | Fast Resolution | Bypasses comprehensive symbol solving in favor of heuristic String-based matching. Required for massive codebases. |
+| Flag | Name | Description | Default |
+|---|---|---|---|
+| `-s`, `--src` | Source Directory | **(Required)** Path to the Java source code directory. | N/A |
+| `-j`, `--jars` | Dependencies | Paths to dependency jars or directories (comma-separated or repeatable). | N/A |
+| `-d`, `--out-db` | Database Output | Directory or path to output the Ladybug DB files. | `.` |
+| `-c`, `--out-csv` | CSV Output | Directory to output the CSV files. | `.` |
+| `-l`, `--lombok` | Enable Lombok | Enable Lombok preprocessing before parsing. | `false` |
+| `-f`, `--fast` | Fast Resolution | Use fast AST heuristic resolution instead of exact symbol solver. | `false` |
+| `-t`, `--threads` | Thread Count | Number of threads for parallel processing. | `4` |
+| `--help` | Help | Show standard help message and exit. | N/A |
+| `--version` | Version | Show version information and exit. | N/A |
 
 ## Querying the Result
 Once the extraction completes, the data is structured natively for `LadybugDB` queries via Open Cypher. 
