@@ -4,30 +4,32 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.ImportDeclaration;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
-import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt;
 import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.stmt.TryStmt;
+import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
-import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
-
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.neuvem.java2graph.Java2GraphConfig;
 import com.neuvem.java2graph.models.*;
+import org.benf.cfr.reader.api.OutputSinkFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.benf.cfr.reader.api.CfrDriver;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ResolvePass implements Pass {
+    private static final Logger logger = LogManager.getLogger(ResolvePass.class);
 
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
         // In the streaming architecture, parse+resolve is fused inside ParsePass.
-        // This pass is kept as a no-op for backward compatibility and test usage.
-        // For standalone usage (e.g., tests), call addStubNodes() after resolving.
     }
 
     /**
@@ -37,43 +39,141 @@ public class ResolvePass implements Pass {
     public static void addStubNodes(GraphContext context) {
         context.inheritanceEdges.forEach(edge -> {
             if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank()) {
-                context.classes.computeIfAbsent(edge.getChildFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
+                context.classes.computeIfAbsent(edge.getChildFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).isExternal(true).declarationCode("").build());
             }
             if (edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
-                context.classes.computeIfAbsent(edge.getParentFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).declarationCode("").build());
+                context.classes.computeIfAbsent(edge.getParentFqn(), fqn -> ClassNode.builder().id(fqn).fqn(fqn).name(fqn).isInterface(false).isExternal(true).declarationCode("").build());
             }
         });
 
         context.callEdges.forEach(edge -> {
             if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank()) {
-                context.methods.computeIfAbsent(edge.getCallerMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
+                context.methods.computeIfAbsent(edge.getCallerMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isExternal(true).isLambda(false).build());
             }
             if (edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
-                context.methods.computeIfAbsent(edge.getCalledMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isLambda(false).build());
+                context.methods.computeIfAbsent(edge.getCalledMethodFqn(), fqn -> MethodNode.builder().id(fqn).fqn(fqn).name(fqn).signature(fqn).sourceCode("").isExternal(true).isLambda(false).build());
             }
         });
     }
 
-    static class ResolverVisitor extends VoidVisitorAdapter<Void> {
+    public static void decompileAndFleshOut(GraphContext context, Java2GraphConfig config, String classFqn) {
+        if (!config.isDecompile() || classFqn == null || classFqn.startsWith("<unresolvedNamespace>") || classFqn.equals("UNKNOWN") || classFqn.equals("java.lang.Object")) {
+            return;
+        }
+
+        ClassNode classNode = context.classes.get(classFqn);
+        // Only decompile if it's external and we haven't already fleshed it out
+        if (classNode != null && (!classNode.isExternal() || (classNode.getDeclarationCode() != null && !classNode.getDeclarationCode().isEmpty() && !classNode.getDeclarationCode().startsWith("//")))) {
+            return;
+        }
+
+        if (context.decompileCache == null) return;
+
+        Optional<String> cachedSource = context.decompileCache.get(classFqn);
+        String source;
+        if (cachedSource.isPresent()) {
+            source = cachedSource.get();
+        } else {
+            source = decompileWithCFR(classFqn, config);
+            if (source != null) {
+                context.decompileCache.put(classFqn, source);
+            }
+        }
+
+        if (source != null) {
+            fleshOutFromSource(classFqn, source, context, config);
+        }
+    }
+
+    private static String decompileWithCFR(String classFqn, Java2GraphConfig config) {
+        final StringBuilder sb = new StringBuilder();
+        OutputSinkFactory mySink = new OutputSinkFactory() {
+            @Override
+            public List<SinkClass> getSupportedSinks(SinkType sinkType, Collection<SinkClass> collection) {
+                return Collections.singletonList(SinkClass.STRING);
+            }
+
+            @Override
+            public <T> Sink<T> getSink(SinkType sinkType, SinkClass sinkClass) {
+                if (sinkType == SinkType.JAVA && sinkClass == SinkClass.STRING) {
+                    return (T s) -> sb.append((String) s);
+                }
+                return (T o) -> {};
+            }
+        };
+
+        CfrDriver driver = new CfrDriver.Builder()
+                .withOutputSink(mySink)
+                .build();
+        
+        try {
+            driver.analyse(Collections.singletonList(classFqn));
+            return sb.length() > 0 ? sb.toString() : null;
+        } catch (Exception e) {
+            logger.warn("Warning: CFR failed to decompile {}: {}", classFqn, e.getMessage());
+            return null;
+        }
+    }
+
+    private static void fleshOutFromSource(String classFqn, String source, GraphContext context, Java2GraphConfig config) {
+        try {
+            com.github.javaparser.JavaParser parser = new com.github.javaparser.JavaParser();
+            CompilationUnit cu = parser.parse(source).getResult().orElse(null);
+            if (cu == null) return;
+
+            for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
+                Optional<String> optionalFqn = td.getFullyQualifiedName();
+                if (optionalFqn.isPresent() && optionalFqn.get().equals(classFqn)) {
+                    ClassNode cn = context.classes.get(classFqn);
+                    if (cn != null) {
+                        cn.setDeclarationCode(getSourceCode(td));
+                        cn.setAnnotations(extractAnnotations(td));
+                        if (td instanceof ClassOrInterfaceDeclaration) {
+                            cn.setInterface(((ClassOrInterfaceDeclaration) td).isInterface());
+                        }
+                    }
+
+                    for (MethodDeclaration m : td.findAll(MethodDeclaration.class)) {
+                        String simpleName = m.getNameAsString();
+                        String baseFqn = classFqn + "." + simpleName;
+                        for (Map.Entry<String, MethodNode> entry : context.methods.entrySet()) {
+                            if (entry.getKey().startsWith(baseFqn) && entry.getValue().isExternal()) {
+                                entry.getValue().setSourceCode(getSourceCode(m));
+                                entry.getValue().setAnnotations(extractAnnotations(m));
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Warning: Failed to flesh out from source: {}", classFqn);
+        }
+    }
+
+    public static List<String> extractAnnotations(NodeWithAnnotations<?> n) {
+        List<String> annotations = new ArrayList<>();
+        n.getAnnotations().forEach(ann -> annotations.add(ann.getNameAsString()));
+        return annotations;
+    }
+
+    private static String getSourceCode(com.github.javaparser.ast.Node n) {
+        return n.getTokenRange().map(Object::toString).orElse("");
+    }
+
+    public static class ResolverVisitor extends VoidVisitorAdapter<Void> {
         private final GraphContext context;
         private final Java2GraphConfig config;
         private final Map<String, TypeDeclaration<?>> classAstIndex;
-        /** Simple-name → FQN map for types. */
         private final Map<String, String> importMap;
-        /** Method-name → Class FQN map for static method imports. */
         private final Map<String, String> staticImportMap;
-        /** List of star-import packages (e.g. "java.util"). */
         private final List<String> starImports;
-        /** List of static star-import class FQNs (e.g. "org.junit.Assert"). */
         private final List<String> staticStarImports;
 
         private final CompilationUnit cu;
         private final String filePath;
         private String currentClassFqn = null;
         private String currentMethodFqn = null;
-        /** Dedup set to avoid adding the same caller→callee edge multiple times. */
         private final Set<String> seenEdges = ConcurrentHashMap.newKeySet();
-        /** Counter for lambda numbering within each class. */
         private int lambdaCounter = 0;
 
         public ResolverVisitor(GraphContext context, Java2GraphConfig config, Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu, String filePath) {
@@ -90,33 +190,37 @@ public class ResolvePass implements Pass {
             this.staticStarImports = new ArrayList<>(imports.get("staticStars").keySet());
         }
 
+        private void checkComplexity(com.github.javaparser.ast.Node n) {
+            com.neuvem.java2graph.util.ResolutionTracer.setLastNode(n.toString().length() > 200 ? n.toString().substring(0, 200) + "..." : n.toString());
+            int depth = 0;
+            com.github.javaparser.ast.Node p = n;
+            while (p != null) {
+                depth++;
+                if (depth > 40) {
+                    throw new com.neuvem.java2graph.util.ComplexityExceededException("AST depth limit (40) reached in " + filePath);
+                }
+                p = p.getParentNode().orElse(null);
+            }
+        }
+
         private static Map<String, Map<String, String>> buildImportMaps(CompilationUnit cu, String currentPkg) {
             Map<String, String> types = new HashMap<>();
             Map<String, String> statics = new HashMap<>();
             Map<String, String> stars = new HashMap<>();
             Map<String, String> staticStars = new HashMap<>();
-            
-            // Implicitly include java.lang and the current package
             stars.put("java.lang", "java.lang");
             if (!currentPkg.isEmpty()) {
                 stars.put(currentPkg, currentPkg);
             }
-
             for (ImportDeclaration imp : cu.getImports()) {
                 String fqn = imp.getNameAsString();
                 if (imp.isAsterisk()) {
-                    if (imp.isStatic()) {
-                        staticStars.put(fqn, fqn);
-                    } else {
-                        stars.put(fqn, fqn);
-                    }
+                    if (imp.isStatic()) staticStars.put(fqn, fqn);
+                    else stars.put(fqn, fqn);
                 } else {
                     String simpleName = fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn;
-                    if (imp.isStatic()) {
-                        statics.put(simpleName, fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : fqn);
-                    } else {
-                        types.put(simpleName, fqn);
-                    }
+                    if (imp.isStatic()) statics.put(simpleName, fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : fqn);
+                    else types.put(simpleName, fqn);
                 }
             }
             Map<String, Map<String, String>> result = new HashMap<>();
@@ -130,7 +234,6 @@ public class ResolvePass implements Pass {
         private void addCall(String calledFqn) {
             if (currentMethodFqn != null && calledFqn != null) {
                 try {
-                    // Ensure every call target has a Method node in our registry (parity with Joern)
                     context.methods.computeIfAbsent(calledFqn, k -> {
                         String workingFqn = k;
                         String baseFqn = workingFqn;
@@ -139,14 +242,12 @@ public class ResolvePass implements Pass {
                             baseFqn = workingFqn.substring(0, workingFqn.indexOf('('));
                             signature = workingFqn.substring(workingFqn.indexOf('('));
                         }
-                        
                         String classFqn = "UNKNOWN";
                         String name = baseFqn;
                         if (baseFqn.startsWith("<unresolvedNamespace>.")) {
                             classFqn = "<unresolvedNamespace>";
                             name = baseFqn.substring("<unresolvedNamespace>.".length());
                         } else if (baseFqn.startsWith(".")) {
-                            // Fix for dot-prefixed methods: redirect to unresolvedNamespace
                             classFqn = "<unresolvedNamespace>";
                             name = baseFqn.substring(1);
                             workingFqn = classFqn + "." + name + signature;
@@ -154,25 +255,28 @@ public class ResolvePass implements Pass {
                             classFqn = baseFqn.substring(0, baseFqn.lastIndexOf('.'));
                             name = baseFqn.substring(baseFqn.lastIndexOf('.') + 1);
                         }
-                        
-                        // Register a placeholder ClassNode for the containing class if it doesn't exist
                         final String finalClassFqn = classFqn;
                         context.classes.computeIfAbsent(finalClassFqn, cfqn -> ClassNode.builder()
                                 .id(cfqn).fqn(cfqn).name(cfqn.contains(".") ? cfqn.substring(cfqn.lastIndexOf('.') + 1) : cfqn)
-                                .isInterface(false).declarationCode("// referenced external/synthetic class")
+                                .isInterface(false).isExternal(true).declarationCode("// referenced external class")
                                 .build());
-
                         return MethodNode.builder()
                                 .id(workingFqn).fqn(workingFqn)
                                 .name(name)
                                 .signature(signature)
-                                .sourceCode("// referenced external/synthetic method")
+                                .sourceCode("// referenced external method")
                                 .containingClassFqn(finalClassFqn)
+                                .isExternal(true)
                                 .isLambda(workingFqn.contains("<lambda>"))
                                 .build();
                     });
 
-                    String edgeKey = currentMethodFqn + "→" + calledFqn;
+                    if (calledFqn.contains(".") && !calledFqn.startsWith("<unresolvedNamespace>")) {
+                        String classFqn = calledFqn.substring(0, calledFqn.lastIndexOf('.'));
+                        decompileAndFleshOut(context, config, classFqn);
+                    }
+
+                    String edgeKey = currentMethodFqn + "\u2192" + calledFqn;
                     if (seenEdges.add(edgeKey)) {
                         context.callEdges.add(MethodCallEdge.builder()
                                 .callerMethodFqn(currentMethodFqn)
@@ -180,33 +284,28 @@ public class ResolvePass implements Pass {
                                 .build());
                     }
                 } catch (Exception e) {
-                    System.err.println("Warning: failed to add call edge from " + currentMethodFqn + " to " + calledFqn + ": " + e.getMessage());
+                    logger.warn("Warning: failed to add call edge from {} to {}: {}", currentMethodFqn, calledFqn, e.getMessage());
                 }
             }
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Type declarations
-        // ──────────────────────────────────────────────────────────────────────
-
         private void handleTypeDeclaration(TypeDeclaration<?> n, boolean isInterface) {
             String fqn = "UNKNOWN";
             try {
+                checkComplexity(n);
                 ResolvedReferenceTypeDeclaration resolved = n.resolve();
                 fqn = resolved.getQualifiedName();
             } catch (Exception e) {
-                fqn = n.getFullyQualifiedName().orElse(
-                        (currentClassFqn != null ? currentClassFqn + "." : "") + n.getNameAsString());
+                fqn = n.getFullyQualifiedName().orElse((currentClassFqn != null ? currentClassFqn + "." : "") + n.getNameAsString());
             }
-
             final String finalFqn = fqn;
             context.classes.put(finalFqn, ClassNode.builder()
                     .id(finalFqn).fqn(finalFqn).name(n.getNameAsString())
-                    .isInterface(isInterface).declarationCode(getSourceCode(n)).filePath(filePath).build());
-
+                    .isInterface(isInterface).declarationCode(getSourceCode(n))
+                    .annotations(extractAnnotations(n))
+                    .filePath(filePath).build());
             String prevClassFqn = currentClassFqn;
             currentClassFqn = finalFqn;
-
             if (n instanceof ClassOrInterfaceDeclaration) {
                 ClassOrInterfaceDeclaration cid = (ClassOrInterfaceDeclaration) n;
                 cid.getExtendedTypes().forEach(ext -> addInheritance(finalFqn, ext, "EXTENDS"));
@@ -217,12 +316,9 @@ public class ResolvePass implements Pass {
                 context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(finalFqn).parentFqn("java.lang.Record").type("EXTENDS").build());
             }
 
-            // Synthesize a default constructor if no explicit one exists
-            // (Joern generates these from bytecode; we need to match)
             if (!isInterface && n instanceof ClassOrInterfaceDeclaration) {
                 ClassOrInterfaceDeclaration cid = (ClassOrInterfaceDeclaration) n;
-                boolean hasExplicitCtor = cid.getConstructors().size() > 0;
-                if (!hasExplicitCtor) {
+                if (cid.getConstructors().isEmpty()) {
                     String ctorFqn = finalFqn + "." + n.getNameAsString() + "()";
                     context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                             .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
@@ -230,17 +326,14 @@ public class ResolvePass implements Pass {
                             .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
                 }
             } else if (n instanceof EnumDeclaration) {
-                // Enum always has a synthetic constructor
                 String ctorFqn = finalFqn + "." + n.getNameAsString() + "()";
                 context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
                         .id(ctorFqn).fqn(ctorFqn).name(n.getNameAsString())
                         .signature("()").sourceCode("// synthetic enum constructor")
                         .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
             } else if (n instanceof RecordDeclaration) {
-                // Record has a canonical constructor with its components as params
                 RecordDeclaration rd = (RecordDeclaration) n;
-                boolean hasExplicitCtor = rd.getConstructors().size() > 0;
-                if (!hasExplicitCtor) {
+                if (rd.getConstructors().isEmpty()) {
                     int paramCount = rd.getParameters().size();
                     String ctorFqn = finalFqn + "." + n.getNameAsString() + "(" + paramCount + ")";
                     context.methods.computeIfAbsent(ctorFqn, k -> MethodNode.builder()
@@ -249,27 +342,22 @@ public class ResolvePass implements Pass {
                             .containingClassFqn(finalFqn).isLambda(false).filePath(filePath).build());
                 }
             }
-
-            for (var member : n.getMembers()) {
-                member.accept(this, null);
-            }
+            for (var member : n.getMembers()) member.accept(this, null);
             currentClassFqn = prevClassFqn;
         }
 
         private void addInheritance(String childFqn, ClassOrInterfaceType type, String relType) {
             String parentFqn = null;
             try {
+                checkComplexity(type);
                 ResolvedType resolved = type.resolve();
                 parentFqn = resolved.asReferenceType().getQualifiedName();
             } catch (Exception e) {
-                // Fallback: qualify the type name via import map
                 parentFqn = qualify(type.getNameAsString());
             }
             if (parentFqn != null) {
-                context.inheritanceEdges.add(InheritanceEdge.builder()
-                        .childFqn(childFqn)
-                        .parentFqn(parentFqn)
-                        .type(relType).build());
+                context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(childFqn).parentFqn(parentFqn).type(relType).build());
+                decompileAndFleshOut(context, config, parentFqn);
             }
         }
 
@@ -278,77 +366,17 @@ public class ResolvePass implements Pass {
         @Override public void visit(AnnotationDeclaration n, Void arg) { handleTypeDeclaration(n, true); }
         @Override public void visit(RecordDeclaration n, Void arg) { handleTypeDeclaration(n, false); }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Method / constructor / initializer declarations
-        // ──────────────────────────────────────────────────────────────────────
-
-        @Override
-        public void visit(MethodDeclaration n, Void arg) {
+        @Override public void visit(MethodDeclaration n, Void arg) {
             String fqn;
-            try {
-                fqn = n.resolve().getQualifiedSignature();
-            } catch (Exception e) {
-                fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString();
+            try { 
+                checkComplexity(n);
+                fqn = n.resolve().getQualifiedSignature(); 
             }
+            catch (Exception e) { fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString(); }
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
-            String prev = currentMethodFqn;
-            currentMethodFqn = fqn;
-            super.visit(n, arg);
-            currentMethodFqn = prev;
-        }
-
-        @Override
-        public void visit(ConstructorDeclaration n, Void arg) {
-            String fqn;
-            try {
-                fqn = n.resolve().getQualifiedSignature();
-            } catch (Exception e) {
-                fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString();
-            }
-            context.methods.put(fqn, MethodNode.builder()
-                    .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
-            String prev = currentMethodFqn;
-            currentMethodFqn = fqn;
-
-            boolean hasExplicit = n.getBody().getStatements().stream()
-                    .anyMatch(s -> s instanceof ExplicitConstructorInvocationStmt);
-            if (!hasExplicit && currentClassFqn != null && !"java.lang.Object".equals(currentClassFqn)) {
-                addCall("UNRESOLVED.super()");
-            }
-            super.visit(n, arg);
-            currentMethodFqn = prev;
-        }
-
-        @Override
-        public void visit(InitializerDeclaration n, Void arg) {
-            String fqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN")
-                    + (n.isStatic() ? ".<clinit>" : ".<init>")
-                    + "$" + n.getBegin().map(p -> p.line).orElse(0);
-            context.methods.put(fqn, MethodNode.builder().id(fqn).fqn(fqn)
-                    .name(n.isStatic() ? "<clinit>" : "<init>").signature("()")
-                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
-            String prev = currentMethodFqn;
-            currentMethodFqn = fqn;
-            super.visit(n, arg);
-            currentMethodFqn = prev;
-        }
-
-        @Override
-        public void visit(FieldDeclaration n, Void arg) {
-            // Static fields → <clinit>(), instance fields → <init>()
-            // Matches Joern's naming convention (no "-fields" suffix)
-            String fqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN")
-                    + (n.isStatic() ? ".<clinit>()" : ".<init>()");
-            // Register the clinit/init node if it doesn't exist yet
-            context.methods.computeIfAbsent(fqn, k -> MethodNode.builder()
-                    .id(fqn).fqn(fqn)
-                    .name(n.isStatic() ? "<clinit>" : "<init>")
-                    .signature("()")
-                    .sourceCode("// field initializers")
-                    .containingClassFqn(currentClassFqn)
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn)
+                    .annotations(extractAnnotations(n))
                     .isLambda(false).filePath(filePath).build());
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
@@ -356,279 +384,186 @@ public class ResolvePass implements Pass {
             currentMethodFqn = prev;
         }
 
-        @Override
-        public void visit(EnumConstantDeclaration n, Void arg) {
+        @Override public void visit(ConstructorDeclaration n, Void arg) {
+            String fqn;
+            try { 
+                checkComplexity(n);
+                fqn = n.resolve().getQualifiedSignature(); 
+            }
+            catch (Exception e) { fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString(); }
+            context.methods.put(fqn, MethodNode.builder()
+                    .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
+                    .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn)
+                    .annotations(extractAnnotations(n))
+                    .isLambda(false).filePath(filePath).build());
+            String prev = currentMethodFqn;
+            currentMethodFqn = fqn;
+            boolean hasExp = n.getBody().getStatements().stream().anyMatch(s -> s instanceof ExplicitConstructorInvocationStmt);
+            if (!hasExp && currentClassFqn != null && !"java.lang.Object".equals(currentClassFqn)) addCall("UNRESOLVED.super()");
+            super.visit(n, arg);
+            currentMethodFqn = prev;
+        }
+
+        @Override public void visit(InitializerDeclaration n, Void arg) {
+            String fqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN") + (n.isStatic() ? ".<clinit>" : ".<init>") + "$" + n.getBegin().map(p -> p.line).orElse(0);
+            context.methods.put(fqn, MethodNode.builder().id(fqn).fqn(fqn).name(n.isStatic() ? "<clinit>" : "<init>").signature("()").sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
+            String prev = currentMethodFqn;
+            currentMethodFqn = fqn;
+            super.visit(n, arg);
+            currentMethodFqn = prev;
+        }
+
+        @Override public void visit(FieldDeclaration n, Void arg) {
+            String fqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN") + (n.isStatic() ? ".<clinit>()" : ".<init>()");
+            context.methods.computeIfAbsent(fqn, k -> MethodNode.builder().id(fqn).fqn(fqn).name(n.isStatic() ? "<clinit>" : "<init>").signature("()").sourceCode("// field initializers").containingClassFqn(currentClassFqn).isLambda(false).filePath(filePath).build());
+            String prev = currentMethodFqn;
+            currentMethodFqn = fqn;
+            super.visit(n, arg);
+            currentMethodFqn = prev;
+        }
+
+        @Override public void visit(EnumConstantDeclaration n, Void arg) {
             if (currentClassFqn != null) {
                 String prev = currentMethodFqn;
                 currentMethodFqn = currentClassFqn + ".<clinit>";
                 n.getArguments().forEach(a -> a.accept(this, null));
                 currentMethodFqn = prev;
             }
-            if (n.getClassBody().size() > 0) {
+            if (!n.getClassBody().isEmpty()) {
                 String anonFqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN") + "$" + n.getNameAsString();
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
-                context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name(n.getNameAsString()).isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
+                context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn).name(n.getNameAsString()).isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
                 n.getClassBody().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
             }
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Lambda expressions
-        // ──────────────────────────────────────────────────────────────────────
-
-        @Override
-        public void visit(LambdaExpr n, Void arg) {
-            if (currentClassFqn == null) {
-                super.visit(n, arg);
-                return;
-            }
-
+        @Override public void visit(LambdaExpr n, Void arg) {
+            if (currentClassFqn == null) { super.visit(n, arg); return; }
             int idx = lambdaCounter++;
-
-            // Try to resolve the functional interface this lambda implements
             String functionalInterface = null;
             if (!config.isFastResolve()) {
                 try {
+                    checkComplexity(n);
                     ResolvedType rt = n.calculateResolvedType();
                     String desc = rt.describe();
-                    if (!desc.startsWith("?")) {
-                        functionalInterface = desc;
-                    }
-                } catch (Throwable ignored) { /* fall through */ }
+                    if (!desc.startsWith("?")) functionalInterface = desc;
+                } catch (Throwable ignored) {}
             }
-
-            // Build a Joern-style lambda FQN: enclosingClass.<lambda>N()
             String lambdaFqn = currentClassFqn + ".<lambda>" + idx + "()";
-
-            // Register the lambda as a method node
-            context.methods.put(lambdaFqn, MethodNode.builder()
-                    .id(lambdaFqn).fqn(lambdaFqn)
-                    .name("<lambda>" + idx + "()")
-                    .signature("()")
-                    .sourceCode(getSourceCode(n))
-                    .containingClassFqn(currentClassFqn)
-                    .isLambda(true)
-                    .build());
-
-            // Add inheritance edge: lambda → functional interface
-            if (functionalInterface != null) {
-                context.inheritanceEdges.add(InheritanceEdge.builder()
-                        .childFqn(lambdaFqn)
-                        .parentFqn(functionalInterface)
-                        .type("IMPLEMENTS").build());
-            }
-
-            // Add inbound call edge: enclosing method → lambda
-            // (the enclosing method "invokes" or passes the lambda)
+            context.methods.put(lambdaFqn, MethodNode.builder().id(lambdaFqn).fqn(lambdaFqn).name("<lambda>" + idx + "()").signature("()").sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(true).build());
+            if (functionalInterface != null) context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(lambdaFqn).parentFqn(functionalInterface).type("IMPLEMENTS").build());
             addCall(lambdaFqn);
-
-            // Visit the lambda body with the lambda as the current method
             String prevMethod = currentMethodFqn;
             currentMethodFqn = lambdaFqn;
             super.visit(n, arg);
             currentMethodFqn = prevMethod;
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Method calls
-        // ──────────────────────────────────────────────────────────────────────
-
-        @Override
-        public void visit(MethodCallExpr n, Void arg) {
+        @Override public void visit(MethodCallExpr n, Void arg) {
             if (currentMethodFqn != null) {
                 String calledFqn = null;
                 boolean resolvedViaSolver = false;
-                
                 if (!config.isFastResolve()) {
                     try {
-                        // Primary: full symbol resolution
+                        checkComplexity(n);
                         ResolvedMethodDeclaration resolved = n.resolve();
                         calledFqn = resolved.getQualifiedSignature();
-
-                        // IMPROVEMENT: Prefer receiver type for inherited methods (parity with Joern)
                         if (n.getScope().isPresent()) {
                             String scopeType = resolveScopeType(n.getScope().get());
                             if (scopeType != null && !scopeType.isBlank() && !scopeType.equals("UNKNOWN")) {
-                                // Extract signature and method name, then re-prefix with scope type
                                 String signature = calledFqn.contains("(") ? calledFqn.substring(calledFqn.indexOf('(')) : "()";
-                                String methodName = resolved.getName();
-                                calledFqn = scopeType + "." + methodName + signature;
+                                calledFqn = scopeType + "." + resolved.getName() + signature;
                             }
                         }
                         resolvedViaSolver = true;
-                    } catch (Throwable e) {
-                        // Secondary: try to resolve just the scope type, or fall back
-                        // to <unresolvedNamespace>.methodName(N) matching Joern's convention
-                    }
+                    } catch (Throwable ignored) {}
                 }
-                
-                if (!resolvedViaSolver) {
-                    calledFqn = deduceFqnManually(n);
-                }
+                if (!resolvedViaSolver) calledFqn = deduceFqnManually(n);
                 addCall(calledFqn);
             }
             super.visit(n, arg);
         }
 
-        /**
-         * Build a fallback FQN for an unresolved method call.
-         * <ul>
-         *   <li>If the scope's type can be determined (cast, symbol solver, import map)
-         *       → {@code scopeType.methodName(N)}</li>
-         *   <li>Otherwise → {@code <unresolvedNamespace>.methodName(N)} matching Joern</li>
-         * </ul>
-         */
         private String deduceFqnManually(MethodCallExpr n) {
             String methodName = n.getNameAsString();
             int argCount = n.getArguments().size();
             String suffix = "." + methodName + "(" + argCount + ")";
-
             if (n.getScope().isPresent()) {
                 String scopeType = resolveScopeType(n.getScope().get());
-                if (scopeType != null && !scopeType.isBlank()) {
-                    return scopeType + suffix;
-                }
+                if (scopeType != null && !scopeType.isBlank()) return scopeType + suffix;
             } else {
-                // No explicit scope → check static imports, then implicit "this"
-                if (staticImportMap.containsKey(methodName)) {
-                    return staticImportMap.get(methodName) + suffix;
-                }
-                // Try static star imports
-                for (String staticStar : staticStarImports) {
-                    return staticStar + suffix; // Heuristic: assume first star import
-                }
-                if (currentClassFqn != null) {
-                    return currentClassFqn + suffix;
-                }
+                if (staticImportMap.containsKey(methodName)) return staticImportMap.get(methodName) + suffix;
+                for (String staticStar : staticStarImports) return staticStar + suffix;
+                if (currentClassFqn != null) return currentClassFqn + suffix;
             }
             return "<unresolvedNamespace>" + suffix;
         }
 
-        /**
-         * Try to determine the concrete type of a scope expression.
-         * Returns the FQN of the type, or {@code null} if it cannot be determined.
-         * <p>
-         * This method is intentionally <b>non-recursive</b>: it does NOT walk into
-         * method-call chains (builder patterns). For unresolvable scopes the caller
-         * falls back to {@code <unresolvedNamespace>}.
-         */
-        private String resolveScopeType(Expression scope) {
-            return resolveScopeTypeRecursive(scope, 0);
-        }
+        private String resolveScopeType(Expression scope) { return resolveScopeTypeRecursive(scope, 0); }
 
         private String resolveScopeTypeRecursive(Expression scope, int depth) {
-            if (depth > 5) return null; // Avoid circular/too-deep chains
-
-            // Unwrap parentheses
+            if (depth > 5) return null;
             Expression unwrapped = scope;
-            while (unwrapped.isEnclosedExpr()) {
-                unwrapped = unwrapped.asEnclosedExpr().getInner();
-            }
-
-            // Cast → use the target type
-            if (unwrapped.isCastExpr()) {
-                return qualify(stripGenerics(unwrapped.asCastExpr().getType().asString()));
-            }
-
-            // --- FAST PATH: AST Heuristics First ---
-            // NameExpr → try import-map qualification first, then AST var-decl lookup
+            while (unwrapped.isEnclosedExpr()) unwrapped = unwrapped.asEnclosedExpr().getInner();
+            if (unwrapped.isCastExpr()) return qualify(stripGenerics(unwrapped.asCastExpr().getType().asString()));
             if (unwrapped.isNameExpr()) {
                 String name = unwrapped.asNameExpr().getNameAsString();
                 String qualified = qualify(name);
                 if (!qualified.equals(name)) return qualified;
-
                 String declaredType = findDeclaredType(unwrapped.asNameExpr());
                 if (declaredType != null) return qualify(declaredType);
             }
-
-            // ObjectCreationExpr (e.g. new Foo().method()) → type is Foo
-            if (unwrapped.isObjectCreationExpr()) {
-                return qualify(stripGenerics(unwrapped.asObjectCreationExpr().getTypeAsString()));
-            }
-
-            // this / super
-            if (unwrapped.isThisExpr()) {
-                return currentClassFqn;
-            }
+            if (unwrapped.isObjectCreationExpr()) return qualify(stripGenerics(unwrapped.asObjectCreationExpr().getTypeAsString()));
+            if (unwrapped.isThisExpr()) return currentClassFqn;
             if (unwrapped.isSuperExpr() && currentClassFqn != null) {
-                return context.inheritanceEdges.stream()
-                        .filter(e -> e.getChildFqn().equals(currentClassFqn) && e.getType().equals("EXTENDS"))
-                        .map(InheritanceEdge::getParentFqn)
-                        .findFirst().orElse(null);
+                return context.inheritanceEdges.stream().filter(e -> e.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(e.getType())).map(InheritanceEdge::getParentFqn).findFirst().orElse(null);
             }
-
-            // FieldAccessExpr purely heuristic (fast)
             if (unwrapped.isFieldAccessExpr()) {
                 FieldAccessExpr fae = unwrapped.asFieldAccessExpr();
                 String scopeType = resolveScopeTypeRecursive(fae.getScope(), depth + 1);
-                if (scopeType != null) {
-                    return scopeType + "." + fae.getNameAsString();
-                }
+                if (scopeType != null) return scopeType + "." + fae.getNameAsString();
             }
-
-            // In pure fast-resolve mode, we stop here (skip JavaSymbolSolver).
             if (config.isFastResolve()) {
                 if (unwrapped.isMethodCallExpr()) {
                     MethodCallExpr mce = unwrapped.asMethodCallExpr();
                     String guessed = guessReturnType(mce.getNameAsString());
                     if (guessed != null) return guessed;
-                    
                     String deduced = deduceFqnManually(mce);
                     MethodNode mn = context.methods.get(deduced);
-                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
-                        // Advanced heuristic for fast-path: we could use method registry if available
-                    }
+                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {}
                 }
                 return null;
             }
-
-            // --- SLOW PATH: JavaSymbolSolver ---
-            // Symbol-solver type resolution
             try {
+                checkComplexity(unwrapped);
                 ResolvedType rt = unwrapped.calculateResolvedType();
                 String desc = stripGenerics(rt.describe());
                 if (!desc.startsWith("?")) return desc;
-            } catch (Throwable ignored) { /* fall through */ }
-
-            // Array index access → try to resolve the element type
+            } catch (Throwable ignored) {}
             if (unwrapped.isArrayAccessExpr()) {
                 try {
-                    ResolvedType arrType = unwrapped.asArrayAccessExpr()
-                            .getName().calculateResolvedType();
+                    checkComplexity(unwrapped);
+                    ResolvedType arrType = unwrapped.asArrayAccessExpr().getName().calculateResolvedType();
                     if (arrType.isArray()) {
                         String comp = stripGenerics(arrType.asArrayType().getComponentType().describe());
                         if (!comp.startsWith("?")) return comp;
                     }
-                } catch (Throwable ignored) { /* fall through */ }
+                } catch (Throwable ignored) {}
             }
-
-            // MethodCallExpr scope (e.g. getContext().getConfiguration())
             if (unwrapped.isMethodCallExpr()) {
                 MethodCallExpr mce = unwrapped.asMethodCallExpr();
                 try {
-                    ResolvedMethodDeclaration scopeMethod = mce.resolve();
-                    String returnType = stripGenerics(scopeMethod.getReturnType().describe());
-                    if (!returnType.startsWith("?") && !"void".equals(returnType)) {
-                        return returnType;
-                    }
+                    checkComplexity(mce);
+                    ResolvedMethodDeclaration m = mce.resolve();
+                    String returnType = stripGenerics(m.getReturnType().describe());
+                    if (!returnType.startsWith("?") && !"void".equals(returnType)) return returnType;
                 } catch (Throwable e) {
-                    // Heuristic fallback for method chains
-                    String mName = mce.getNameAsString();
-                    String guessed = guessReturnType(mName);
+                    String guessed = guessReturnType(mce.getNameAsString());
                     if (guessed != null) return guessed;
-
-                    // Recursive heuristic: deduce the method's FQN and check our graph
-                    String deduced = deduceFqnManually(mce);
-                    MethodNode mn = context.methods.get(deduced);
-                    if (mn != null && mn.getSignature() != null && !mn.getSignature().contains("void")) {
-                        // Future: store returnType in MethodNode.
-                    }
                 }
             }
-
             return null;
         }
 
@@ -649,242 +584,134 @@ public class ResolvePass implements Pass {
             return null;
         }
 
-        /**
-         * If {@code simpleName} matches an import in this CU, return its FQN.
-         * Otherwise return it unchanged. Handles nested classes (e.g. Map.Entry).
-         */
         private String qualify(String simpleName) {
             if (simpleName == null || simpleName.isEmpty()) return simpleName;
-            
-            if (importMap.containsKey(simpleName)) {
-                return importMap.get(simpleName);
-            }
-            
-            // Handle nested classes: Map.Entry -> jakarta.util.Map.Entry
+            if (importMap.containsKey(simpleName)) return importMap.get(simpleName);
             if (simpleName.contains(".")) {
                 String prefix = simpleName.substring(0, simpleName.indexOf('.'));
                 String suffix = simpleName.substring(simpleName.indexOf('.'));
                 String qualifiedPrefix = qualify(prefix);
-                if (!qualifiedPrefix.equals(prefix)) {
-                    return qualifiedPrefix + suffix;
-                }
+                if (!qualifiedPrefix.equals(prefix)) return qualifiedPrefix + suffix;
             }
-
-            // Check star imports against known context classes
             for (String star : starImports) {
                 String fqn = star + "." + simpleName;
-                if (context.classes.containsKey(fqn)) {
-                    return fqn;
-                }
+                if (context.classes.containsKey(fqn)) return fqn;
             }
             return simpleName;
         }
 
-        /**
-         * Walk up the AST from a {@link NameExpr} to find its variable or parameter
-         * declaration, and return the declared type's simple name.
-         * Returns {@code null} if the declaration can't be found.
-         */
         private String findDeclaredType(NameExpr nameExpr) {
             String varName = nameExpr.getNameAsString();
-
-            // Search for a VariableDeclarator or Parameter in the enclosing callable
-            // (MethodDeclaration, ConstructorDeclaration, or InitializerDeclaration)
             com.github.javaparser.ast.Node node = nameExpr;
             while (node.getParentNode().isPresent()) {
                 node = node.getParentNode().get();
-
-                // Check if this is a method/constructor — search its body and params
                 if (node instanceof MethodDeclaration) {
                     MethodDeclaration md = (MethodDeclaration) node;
-                    // Check parameters first
-                    for (Parameter p : md.getParameters()) {
-                        if (p.getNameAsString().equals(varName)) {
-                            return stripGenerics(p.getTypeAsString());
-                        }
-                    }
-                    // Search local variable declarations in the body
+                    for (Parameter p : md.getParameters()) if (p.getNameAsString().equals(varName)) return stripGenerics(p.getTypeAsString());
                     String found = searchBodyForVar(md, varName);
                     if (found != null) return found;
-                    break; // don't look beyond the enclosing method
+                    break;
                 }
                 if (node instanceof ConstructorDeclaration) {
                     ConstructorDeclaration cd = (ConstructorDeclaration) node;
-                    for (Parameter p : cd.getParameters()) {
-                        if (p.getNameAsString().equals(varName)) {
-                            return stripGenerics(p.getTypeAsString());
-                        }
-                    }
+                    for (Parameter p : cd.getParameters()) if (p.getNameAsString().equals(varName)) return stripGenerics(p.getTypeAsString());
                     String found = searchBodyForVar(cd, varName);
                     if (found != null) return found;
                     break;
                 }
-
-                // For-each variable: for (Type x : ...) { x.method() }
                 if (node instanceof ForEachStmt) {
                     ForEachStmt fes = (ForEachStmt) node;
-                    if (fes.getVariable().getVariables().stream()
-                            .anyMatch(v -> v.getNameAsString().equals(varName))) {
-                        return stripGenerics(fes.getVariable().getCommonType().asString());
-                    }
+                    if (fes.getVariable().getVariables().stream().anyMatch(v -> v.getNameAsString().equals(varName))) return stripGenerics(fes.getVariable().getCommonType().asString());
                 }
-
-                // Catch-clause variable: catch (IOException e) { e.getMessage() }
                 if (node instanceof CatchClause) {
                     CatchClause cc = (CatchClause) node;
                     Parameter p = cc.getParameter();
-                    if (p.getNameAsString().equals(varName)) {
-                        return stripGenerics(p.getTypeAsString());
-                    }
+                    if (p.getNameAsString().equals(varName)) return stripGenerics(p.getTypeAsString());
                 }
-
-                // Lambda parameter: (e) -> e.getMessage()
                 if (node instanceof LambdaExpr) {
                     LambdaExpr le = (LambdaExpr) node;
-                    for (Parameter p : le.getParameters()) {
-                        if (p.getNameAsString().equals(varName)) {
-                            // If it's a simple lambda parameter without an explicit type, it's unknowable via AST.
-                            // But if they provided a type (e.g. (IOException e) -> e.getMessage()), we use it.
-                            String type = p.getTypeAsString();
-                            if (!type.equals("?")) return stripGenerics(type);
-                        }
+                    for (Parameter p : le.getParameters()) if (p.getNameAsString().equals(varName)) {
+                        String type = p.getTypeAsString();
+                        if (!type.equals("?")) return stripGenerics(type);
                     }
                 }
-
             }
-
-            // Search in parent classes via context inheritance edges (inheritance-aware)
             if (currentClassFqn != null) {
-                String parentFqn = context.inheritanceEdges.stream()
-                        .filter(e -> e.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(e.getType()))
-                        .map(InheritanceEdge::getParentFqn)
-                        .findFirst().orElse(null);
+                String parentFqn = context.inheritanceEdges.stream().filter(e -> e.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(e.getType())).map(InheritanceEdge::getParentFqn).findFirst().orElse(null);
                 if (parentFqn != null) {
-                    String foundInParent = searchClassForField(parentFqn, varName);
-                    if (foundInParent != null) return foundInParent;
+                    String found = searchClassForField(parentFqn, varName);
+                    if (found != null) return found;
                 }
             }
-
             return null;
         }
 
         private String searchClassForField(String classFqn, String varName) {
-            // O(1) Instant AST Lookup
             TypeDeclaration<?> td = classAstIndex.get(classFqn);
             if (td != null) {
-                for (FieldDeclaration fd : td.getFields()) {
-                    for (VariableDeclarator vd : fd.getVariables()) {
-                        if (vd.getNameAsString().equals(varName)) {
-                            return stripGenerics(vd.getTypeAsString());
-                        }
-                    }
-                }
+                for (FieldDeclaration fd : td.getFields()) for (VariableDeclarator vd : fd.getVariables()) if (vd.getNameAsString().equals(varName)) return stripGenerics(vd.getTypeAsString());
             }
-
-            // Fallback: Use Symbol Solver for library parents (handles JARs and standard library)
             if (context.typeSolver instanceof com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver) {
                 try {
-                    com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver ts = 
-                        (com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver) context.typeSolver;
-                    com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration ref = ts.solveType(classFqn);
-                    return ref.getAllFields().stream()
-                            .filter(f -> f.getName().equals(varName))
-                            .map(f -> stripGenerics(f.getType().describe()))
-                            .findFirst().orElse(null);
+                    var ts = (com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver) context.typeSolver;
+                    var ref = ts.solveType(classFqn);
+                    return ref.getAllFields().stream().filter(f -> f.getName().equals(varName)).map(f -> stripGenerics(f.getType().describe())).findFirst().orElse(null);
                 } catch (Exception ignored) {}
             }
-
             return null;
         }
 
-        /**
-         * Search a node's descendants for a {@link VariableDeclarator} matching
-         * the given name and return its declared type.
-         */
         private String searchBodyForVar(com.github.javaparser.ast.Node bodyNode, String varName) {
-            return bodyNode.findFirst(VariableDeclarator.class, vd -> vd.getNameAsString().equals(varName))
-                    .map(vd -> stripGenerics(vd.getTypeAsString()))
-                    .orElse(null);
+            return bodyNode.findFirst(VariableDeclarator.class, vd -> vd.getNameAsString().equals(varName)).map(vd -> stripGenerics(vd.getTypeAsString())).orElse(null);
         }
 
-        /**
-         * Strip generic type parameters from a type string.
-         * Also handles multi-catch types by picking the first one.
-         * "Map<String, Integer>" -> "Map", "IOException | SQLException" -> "IOException"
-         */
         private static String stripGenerics(String typeStr) {
             if (typeStr == null) return null;
-            // Handle multi-catch: "IOException | SQLException" -> "IOException"
             int pipeIdx = typeStr.indexOf('|');
-            if (pipeIdx >= 0) {
-                typeStr = typeStr.substring(0, pipeIdx).trim();
-            }
+            if (pipeIdx >= 0) typeStr = typeStr.substring(0, pipeIdx).trim();
             int idx = typeStr.indexOf('<');
             String stripped = idx >= 0 ? typeStr.substring(0, idx).trim() : typeStr.trim();
-            // Fallback for naked generic parameters like <T> which substring to empty
             return stripped.isEmpty() ? "java.lang.Object" : stripped;
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Object creation
-        // ──────────────────────────────────────────────────────────────────────
-
-        private String getSourceCode(com.github.javaparser.ast.Node node) {
-            return node.getTokenRange().map(Object::toString).orElse("");
-        }
-
-        @Override
-        public void visit(ObjectCreationExpr n, Void arg) {
+        @Override public void visit(ObjectCreationExpr n, Void arg) {
             if (currentMethodFqn != null) {
                 String calledFqn;
-                try {
-                    ResolvedConstructorDeclaration resolved = n.resolve();
-                    calledFqn = resolved.getQualifiedSignature();
-                } catch (Exception e) {
-                    // Better qualification: check imports and current package/class
+                try { 
+                    checkComplexity(n);
+                    calledFqn = n.resolve().getQualifiedSignature(); 
+                }
+                catch (Exception e) {
                     String typeName = n.getTypeAsString();
                     String baseType = stripGenerics(typeName);
                     String qualifiedType = qualify(baseType);
-
-                    // If it wasn't qualified but looks like a simple name, check inner class
-                    if (qualifiedType.equals(baseType) && !baseType.contains(".") && currentClassFqn != null) {
-                        qualifiedType = currentClassFqn + "." + baseType;
-                    }
-                    
+                    if (qualifiedType.equals(baseType) && !baseType.contains(".") && currentClassFqn != null) qualifiedType = currentClassFqn + "." + baseType;
                     String simpleMethodName = baseType.contains(".") ? baseType.substring(baseType.lastIndexOf('.') + 1) : baseType;
                     calledFqn = qualifiedType + "." + simpleMethodName + "(" + n.getArguments().size() + ")";
                 }
                 addCall(calledFqn);
             }
             if (n.getAnonymousClassBody().isPresent()) {
-                String anonFqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN")
-                        + "$anon$" + n.getBegin().map(p -> p.line).orElse(0);
+                String anonFqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN") + "$anon$" + n.getBegin().map(p -> p.line).orElse(0);
                 String prevCls = currentClassFqn;
                 currentClassFqn = anonFqn;
-                context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn)
-                        .name("$anon").isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
+                context.classes.put(anonFqn, ClassNode.builder().id(anonFqn).fqn(anonFqn).name("$anon").isInterface(false).declarationCode(getSourceCode(n)).filePath(filePath).build());
                 n.getAnonymousClassBody().get().forEach(member -> member.accept(this, null));
                 currentClassFqn = prevCls;
-            } else {
-                super.visit(n, arg);
-            }
+            } else super.visit(n, arg);
         }
 
-        @Override
-        public void visit(ExplicitConstructorInvocationStmt n, Void arg) {
+        @Override public void visit(ExplicitConstructorInvocationStmt n, Void arg) {
             if (currentMethodFqn != null) {
                 String calledFqn;
-                try {
-                    calledFqn = n.resolve().getQualifiedSignature();
-                } catch (Exception e) {
-                    // Fallback using class inheritance info
+                try { 
+                    checkComplexity(n);
+                    calledFqn = n.resolve().getQualifiedSignature(); 
+                }
+                catch (Exception e) {
                     String targetClass = currentClassFqn;
                     if (!n.isThis() && currentClassFqn != null) {
-                        // Find parent class from inheritance edges
-                        targetClass = context.inheritanceEdges.stream()
-                                .filter(edge -> edge.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(edge.getType()))
-                                .map(InheritanceEdge::getParentFqn)
-                                .findFirst().orElse("UNRESOLVED.super");
+                        targetClass = context.inheritanceEdges.stream().filter(edge -> edge.getChildFqn().equals(currentClassFqn) && "EXTENDS".equals(edge.getType())).map(InheritanceEdge::getParentFqn).findFirst().orElse("UNRESOLVED.super");
                     }
                     String simpleName = targetClass.contains(".") ? targetClass.substring(targetClass.lastIndexOf('.') + 1) : targetClass;
                     calledFqn = targetClass + "." + simpleName + "(" + n.getArguments().size() + ")";
@@ -894,12 +721,7 @@ public class ResolvePass implements Pass {
             super.visit(n, arg);
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        //  Implicit method calls from language constructs
-        // ──────────────────────────────────────────────────────────────────────
-
-        @Override
-        public void visit(ForEachStmt n, Void arg) {
+        @Override public void visit(ForEachStmt n, Void arg) {
             if (currentMethodFqn != null) {
                 addCall("<unresolvedNamespace>.iterator()");
                 addCall("<unresolvedNamespace>.hasNext()");
@@ -908,11 +730,8 @@ public class ResolvePass implements Pass {
             super.visit(n, arg);
         }
 
-        @Override
-        public void visit(TryStmt n, Void arg) {
-            if (currentMethodFqn != null && n.getResources().size() > 0) {
-                n.getResources().forEach(r -> addCall("<unresolvedNamespace>.close()"));
-            }
+        @Override public void visit(TryStmt n, Void arg) {
+            if (currentMethodFqn != null && !n.getResources().isEmpty()) n.getResources().forEach(r -> addCall("<unresolvedNamespace>.close()"));
             super.visit(n, arg);
         }
     }

@@ -2,9 +2,9 @@ package com.neuvem.java2graph.passes;
 
 import com.ladybugdb.Connection;
 import com.ladybugdb.Database;
-import com.ladybugdb.PreparedStatement;
-import com.ladybugdb.Value;
 import com.neuvem.java2graph.Java2GraphConfig;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import com.neuvem.java2graph.models.*;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
@@ -13,14 +13,13 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
 
 public class ExportPass implements Pass {
+    private static final Logger logger = LogManager.getLogger(ExportPass.class);
 
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
-        System.out.println("Exporting to CSV...");
+        logger.info("Exporting to CSV...");
 
         if (config.getOutCsvDir() != null) {
             Files.createDirectories(config.getOutCsvDir());
@@ -40,17 +39,18 @@ public class ExportPass implements Pass {
                 Files.createDirectories(dbPath.getParent());
             }
             
-            System.out.println("Exporting to Ladybug DB at: " + dbPath);
+            logger.info("Exporting to Ladybug DB at: {}", dbPath);
             exportLadybug(dbPath, context);
         }
     }
 
     private void exportClassesCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("classes.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "isInterface", "declarationCode", "filePath"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("id", "fqn", "name", "isInterface", "isExternal", "annotations", "declarationCode", "filePath").build())) {
             for (ClassNode node : context.classes.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode(), node.getFilePath());
+                    String annotations = String.join(";", node.getAnnotations());
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.isExternal(), annotations, node.getDeclarationCode(), node.getFilePath());
                 }
             }
         }
@@ -58,10 +58,11 @@ public class ExportPass implements Pass {
 
     private void exportMethodsCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("methods.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("id", "fqn", "name", "signature", "sourceCode", "containingClassFqn", "isLambda", "filePath"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("id", "fqn", "name", "signature", "isExternal", "annotations", "sourceCode", "containingClassFqn", "isLambda", "filePath").build())) {
             for (MethodNode node : context.methods.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.getContainingClassFqn(), node.isLambda(), node.getFilePath());
+                    String annotations = String.join(";", node.getAnnotations());
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.isExternal(), annotations, node.getSourceCode(), node.getContainingClassFqn(), node.isLambda(), node.getFilePath());
                 }
             }
         }
@@ -69,7 +70,7 @@ public class ExportPass implements Pass {
 
     private void exportInheritanceCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("inheritance.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("childFqn", "parentFqn", "type"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("childFqn", "parentFqn", "type").build())) {
             for (InheritanceEdge edge : context.inheritanceEdges) {
                 if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank() && 
                     edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
@@ -81,7 +82,7 @@ public class ExportPass implements Pass {
 
     private void exportMethodCallsCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("method_calls.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("caller", "called"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("caller", "called").build())) {
             for (MethodCallEdge edge : context.callEdges) {
                 if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank() && 
                     edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
@@ -93,7 +94,7 @@ public class ExportPass implements Pass {
 
     private void exportMethodDefinitionsCsv(Path dir, GraphContext context) throws IOException {
         try (FileWriter out = new FileWriter(dir.resolve("method_definitions.csv").toFile());
-             CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.withHeader("classFqn", "methodFqn"))) {
+             CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("classFqn", "methodFqn").build())) {
             for (MethodNode node : context.methods.values()) {
                 if (node.getContainingClassFqn() != null && !node.getContainingClassFqn().isBlank() && 
                     node.getFqn() != null && !node.getFqn().isBlank()) {
@@ -113,7 +114,7 @@ public class ExportPass implements Pass {
                      .map(Path::toFile)
                      .forEach(java.io.File::delete);
             } catch (IOException e) {
-                System.err.println("Warning: Could not clear existing database directory: " + e.getMessage());
+                logger.warn("Warning: Could not clear existing database directory: {}", e.getMessage());
             }
         }
 
@@ -121,8 +122,8 @@ public class ExportPass implements Pass {
              Connection conn = new Connection(db)) {
 
             // Schema
-            executeOrThrow(conn, "CREATE NODE TABLE Class(id STRING, fqn STRING, name STRING, isInterface BOOLEAN, declarationCode STRING, filePath STRING, PRIMARY KEY (id))");
-            executeOrThrow(conn, "CREATE NODE TABLE Method(id STRING, fqn STRING, name STRING, signature STRING, sourceCode STRING, isLambda BOOLEAN, filePath STRING, PRIMARY KEY (id))");
+            executeOrThrow(conn, "CREATE NODE TABLE Class(id STRING, fqn STRING, name STRING, isInterface BOOLEAN, isExternal BOOLEAN, annotations STRING, declarationCode STRING, filePath STRING, PRIMARY KEY (id))");
+            executeOrThrow(conn, "CREATE NODE TABLE Method(id STRING, fqn STRING, name STRING, signature STRING, isExternal BOOLEAN, annotations STRING, sourceCode STRING, isLambda BOOLEAN, filePath STRING, PRIMARY KEY (id))");
 
             executeOrThrow(conn, "CREATE REL TABLE Extends(FROM Class TO Class)");
             executeOrThrow(conn, "CREATE REL TABLE Implements(FROM Class TO Class)");
@@ -137,7 +138,8 @@ public class ExportPass implements Pass {
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (ClassNode node : context.classes.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.getDeclarationCode(), node.getFilePath());
+                        String annotations = String.join(";", node.getAnnotations());
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(), node.isExternal(), annotations, node.getDeclarationCode(), node.getFilePath());
                     }
                 }
             }
@@ -147,7 +149,8 @@ public class ExportPass implements Pass {
                  CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                 for (MethodNode node : context.methods.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.getSourceCode(), node.isLambda(), node.getFilePath());
+                        String annotations = String.join(";", node.getAnnotations());
+                        printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(), node.isExternal(), annotations, node.getSourceCode(), node.isLambda(), node.getFilePath());
                     }
                 }
             }
@@ -192,7 +195,7 @@ public class ExportPass implements Pass {
                 }
             }
 
-            System.out.println("Executing bulk COPY commands...");
+            logger.info("Executing bulk COPY commands...");
             executeOrThrow(conn, "COPY Class FROM '" + classesCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
             executeOrThrow(conn, "COPY Method FROM '" + methodsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
             executeOrThrow(conn, "COPY Extends FROM '" + extendsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
@@ -200,10 +203,9 @@ public class ExportPass implements Pass {
             executeOrThrow(conn, "COPY Defines FROM '" + definesCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
             executeOrThrow(conn, "COPY Calls FROM '" + callsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
 
-            System.out.println("Inserted nodes and edges into Ladybug.");
+            logger.info("Inserted nodes and edges into Ladybug.");
         } catch (Exception e) {
-            System.err.println("Failed to export to LadybugDB: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("Failed to export to LadybugDB: {}", e.getMessage(), e);
         }
     }
 
