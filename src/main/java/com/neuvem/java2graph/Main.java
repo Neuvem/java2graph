@@ -16,12 +16,15 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 @Command(name = "java2graph", mixinStandardHelpOptions = true, version = "1.0",
-        description = "Parses Java source code and its dependency jars to create a CSV and Ladybug DB graph.")
+        description = "Parses Java source code and its dependency jars to create a CSV and Ladybug DB graph.",
+        subcommands = { Main.MutateCommand.class, Main.RollbackCommand.class })
 public class Main implements Callable<Integer> {
+
     private static final Logger logger = LogManager.getLogger(Main.class);
 
-    @Option(names = {"-s", "--src"}, required = true, description = "Path to the Java source code directory")
+    @Option(names = {"-s", "--src"}, required = false, description = "Path to the Java source code directory")
     private Path srcDir;
+
 
     @Option(names = {"-j", "--jars"}, split = ",", description = "Paths to dependency jars or directories containing jars (comma-separated or repeatable)")
     private List<Path> jarPaths;
@@ -75,7 +78,12 @@ public class Main implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        logger.info("Starting Java2Graph...");
+        if (srcDir == null) {
+            new CommandLine(this).usage(System.out);
+            return 1;
+        }
+        logger.info("Starting Java2Graph Analysis...");
+
 
         System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", String.valueOf(threads));
 
@@ -165,4 +173,71 @@ public class Main implements Callable<Integer> {
             logger.error("Failed to read list file {}: {}", listFile, e.getMessage());
         }
     }
+
+    @Command(name = "mutate", description = "Executes a mutation plan on the source code.")
+    public static class MutateCommand implements Callable<Integer> {
+        @Option(names = {"-s", "--src"}, required = true, description = "Path to the Java source code directory")
+        private Path srcDir;
+
+        @Option(names = {"-p", "--plan"}, required = true, description = "Path to the mutation plan JSON file")
+        private Path planPath;
+
+        @Option(names = {"-d", "--db"}, description = "Path to the LadybugDB database for graph-aware mutations")
+        private Path dbPath;
+
+        @Option(names = {"--git-checkpoint"}, description = "Create a git commit before applying mutations", defaultValue = "false")
+        private boolean gitCheckpoint;
+
+        @Option(names = {"--cache-dir"}, description = "Directory for caches")
+        private Path cacheDir;
+
+        @Override
+        public Integer call() throws Exception {
+            if (cacheDir == null) {
+                cacheDir = Paths.get(".java2graph", "cache");
+            }
+            Java2GraphConfig config = Java2GraphConfig.builder()
+                    .srcDir(srcDir)
+                    .mutationPlanPath(planPath)
+                    .dbPath(dbPath)
+                    .gitCheckpoint(gitCheckpoint)
+                    .cacheDir(cacheDir)
+                    .build();
+            
+            new MutationPass().execute(config, new GraphContext());
+            return 0;
+        }
+    }
+
+    @Command(name = "rollback", description = "Rolls back mutations using git or backup files.")
+    public static class RollbackCommand implements Callable<Integer> {
+        @Option(names = {"-s", "--src"}, required = true, description = "Path to the Java source code directory")
+        private Path srcDir;
+
+        @Option(names = {"--file"}, description = "Specific file to rollback from .bak")
+        private Path file;
+
+        @Override
+        public Integer call() throws Exception {
+            if (file != null) {
+                Path bakFile = Paths.get(file.toString() + ".bak");
+                if (Files.exists(bakFile)) {
+                    Files.copy(bakFile, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    logger.info("Restored {} from backup.", file);
+                } else {
+                    logger.error("Backup file not found for {}", file);
+                    return 1;
+                }
+            } else {
+                logger.info("Rolling back using git...");
+                ProcessBuilder pb = new ProcessBuilder("git", "reset", "--hard", "HEAD~1");
+                pb.directory(srcDir.toFile());
+                pb.inheritIO();
+                Process p = pb.start();
+                return p.waitFor();
+            }
+            return 0;
+        }
+    }
 }
+

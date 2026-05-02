@@ -333,17 +333,31 @@ public class ExportPass implements Pass {
                 java.util.Set<String> purgedPaths = new java.util.HashSet<>();
                 
                 // 1. PURGE: Delete all existing nodes (and their edges) for the affected file paths.
+                // We purge by relative path (stable) and by ID (extra safety for renames/moves).
                 if (config.getIncrementalFiles() != null) {
                     for (Path path : config.getIncrementalFiles()) {
-                        Path absPath = path.isAbsolute() ? path : config.getSrcDir().resolve(path);
-                        absPath = absPath.normalize().toAbsolutePath();
-                        String p = absPath.toString();
-                        purgedPaths.add(p);
-                        logger.info("Purging existing data for file: {}", p);
-                        addBatch.accept("MATCH (n:Class {filePath: '" + escape(p) + "'}) DETACH DELETE n");
-                        addBatch.accept("MATCH (m:Method {filePath: '" + escape(p) + "'}) DETACH DELETE m");
+                        // Ensure we have the relative path as stored in the DB
+                        String relPath = path.isAbsolute() ? config.getSrcDir().relativize(path).toString() : path.toString();
+                        purgedPaths.add(relPath);
+                        logger.info("Purging existing data for file (relative): {}", relPath);
+                        addBatch.accept("MATCH (n:Class {filePath: '" + escape(relPath) + "'}) DETACH DELETE n");
+                        addBatch.accept("MATCH (m:Method {filePath: '" + escape(relPath) + "'}) DETACH DELETE m");
                     }
                 }
+                
+                // Extra safety: Purge all IDs (FQNs) that we are about to create. 
+                // This prevents PK violations if the filePath purge failed due to path mismatch in previous runs.
+                for (ClassNode node : context.classes.values()) {
+                    if (node.getId() != null) {
+                        addBatch.accept("MATCH (n:Class {id: '" + escape(node.getId()) + "'}) DETACH DELETE n");
+                    }
+                }
+                for (MethodNode node : context.methods.values()) {
+                    if (node.getId() != null) {
+                        addBatch.accept("MATCH (m:Method {id: '" + escape(node.getId()) + "'}) DETACH DELETE m");
+                    }
+                }
+
                 if (config.getIncrementalJars() != null) {
                     for (Path path : config.getIncrementalJars()) {
                         String p = path.toString();
@@ -353,6 +367,7 @@ public class ExportPass implements Pass {
                         addBatch.accept("MATCH (m:Method {filePath: '" + escape(p) + "'}) DETACH DELETE m");
                     }
                 }
+
                 // Flush purge before starting creates
                 flushBatch.run();
 

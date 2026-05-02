@@ -22,6 +22,10 @@ public class Java2GraphConfig {
     private DecompilerType decompilerType = DecompilerType.CFR;
     private List<Path> incrementalFiles;
     private List<Path> incrementalJars;
+    private Path mutationPlanPath;
+    private boolean gitCheckpoint;
+    private Path dbPath;
+
 
     public Java2GraphConfig() {}
 
@@ -64,6 +68,16 @@ public class Java2GraphConfig {
     public List<Path> getIncrementalJars() { return incrementalJars; }
     public void setIncrementalJars(List<Path> incrementalJars) { this.incrementalJars = incrementalJars; }
 
+    public Path getMutationPlanPath() { return mutationPlanPath; }
+    public void setMutationPlanPath(Path mutationPlanPath) { this.mutationPlanPath = mutationPlanPath; }
+
+    public boolean isGitCheckpoint() { return gitCheckpoint; }
+    public void setGitCheckpoint(boolean gitCheckpoint) { this.gitCheckpoint = gitCheckpoint; }
+
+    public Path getDbPath() { return dbPath; }
+    public void setDbPath(Path dbPath) { this.dbPath = dbPath; }
+
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
@@ -81,6 +95,10 @@ public class Java2GraphConfig {
         public Builder decompilerType(DecompilerType decompilerType) { config.decompilerType = decompilerType; return this; }
         public Builder incrementalFiles(List<Path> incrementalFiles) { config.incrementalFiles = incrementalFiles; return this; }
         public Builder incrementalJars(List<Path> incrementalJars) { config.incrementalJars = incrementalJars; return this; }
+        public Builder mutationPlanPath(Path mutationPlanPath) { config.mutationPlanPath = mutationPlanPath; return this; }
+        public Builder gitCheckpoint(boolean gitCheckpoint) { config.gitCheckpoint = gitCheckpoint; return this; }
+        public Builder dbPath(Path dbPath) { config.dbPath = dbPath; return this; }
         public Java2GraphConfig build() { return config; }
+
     }
 }

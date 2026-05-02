@@ -25,7 +25,21 @@ public class DelombokPass implements Pass {
 
         logger.info("Processing Lombok annotations...");
 
-        Path delombokDir = Files.createTempDirectory("delombok");
+        Path delombokDir = config.getCacheDir().resolve("delombok");
+        boolean isIncremental = config.getIncrementalFiles() != null && !config.getIncrementalFiles().isEmpty();
+
+        if (!isIncremental) {
+            // Full run: Clean the delombok cache to ensure a fresh start
+            if (Files.exists(delombokDir)) {
+                try (Stream<Path> walk = Files.walk(delombokDir)) {
+                    walk.sorted(java.util.Comparator.reverseOrder())
+                        .map(Path::toFile)
+                        .forEach(File::delete);
+                }
+            }
+        }
+        Files.createDirectories(delombokDir);
+
         String javaHome = System.getProperty("java.home");
         String javaExecutable = javaHome + "/bin/java";
         
@@ -47,7 +61,9 @@ public class DelombokPass implements Pass {
                     return !s.contains("/build/") && !s.contains("/target/") && 
                            !s.contains("/out/") && !s.contains("/bin/") && 
                            !s.contains("/.gradle/") && !s.contains("/.git/") &&
-                           !s.contains("/.idea/") && !s.contains("/.java2graph/");
+                           !s.contains("/.idea/") && !s.contains("/.java2graph/") &&
+                           !s.contains("/.decypher/");
+
                 })
                 .forEach(javaFile -> {
                     try {
@@ -96,18 +112,37 @@ public class DelombokPass implements Pass {
             Files.createDirectories(targetDir);
 
             // Filter files for this specific root
-            List<String> javaFiles = new ArrayList<>();
+            List<String> filesToDelombok = new ArrayList<>();
+            List<Path> filesToCopy = new ArrayList<>();
+            
             try (var walk = Files.walk(root)) {
                 walk.filter(path -> path.toString().endsWith(".java"))
-                    .map(Path::toAbsolutePath)
-                    .map(Path::toString)
-                    .forEach(javaFiles::add);
+                    .forEach(path -> {
+                        if (!isIncremental || isFileInIncrementalSet(path, config)) {
+                            filesToDelombok.add(path.toAbsolutePath().toString());
+                        } else {
+                            // In incremental mode, if the file isn't in the cache, we must copy it
+                            Path targetFile = targetDir.resolve(root.relativize(path));
+                            if (!Files.exists(targetFile)) {
+                                filesToCopy.add(path);
+                            }
+                        }
+                    });
             }
-            if (javaFiles.isEmpty()) continue;
+            
+            // Copy files that don't need delombok (or are already in the cache)
+            for (Path path : filesToCopy) {
+                Path targetFile = targetDir.resolve(root.relativize(path));
+                Files.createDirectories(targetFile.getParent());
+                Files.copy(path, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            if (filesToDelombok.isEmpty()) continue;
 
             // Restore CLI compatibility: Put only filenames in the @args-file
             Path javaFilesListFile = Files.createTempFile("delombok_files", ".txt");
-            Files.write(javaFilesListFile, javaFiles);
+            Files.write(javaFilesListFile, filesToDelombok);
+
 
             // Phase 1 (JVM Args): Comprehensive modularity for JDK 21/23/25
             List<String> command = new ArrayList<>();
@@ -171,7 +206,8 @@ public class DelombokPass implements Pass {
             command.add("--nocopy");
             command.add("@" + javaFilesListFile.toAbsolutePath().toString());
 
-            logger.info("  Delombok-ing root: {} ({} files)", relativePath, javaFiles.size());
+            logger.info("  Delombok-ing root: {} ({} files)", relativePath, filesToDelombok.size());
+
             
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -197,15 +233,16 @@ public class DelombokPass implements Pass {
 
             // Fallback: If Delombok completely crashed on a specific file and dropped it, 
             // manually copy the original file into the target directory so we never lose symbols.
-            for (String originalFilePath : javaFiles) {
+            for (String originalFilePath : filesToDelombok) {
                 Path original = Path.of(originalFilePath);
                 Path expectedOutput = targetDir.resolve(root.relativize(original));
                 if (!Files.exists(expectedOutput)) {
                     Files.createDirectories(expectedOutput.getParent());
-                    Files.copy(original, expectedOutput);
+                    Files.copy(original, expectedOutput, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         }
+
 
         // Update the src directory for subsequent passes
         config.setSrcDir(delombokDir);
@@ -216,9 +253,11 @@ public class DelombokPass implements Pass {
         if (Files.isDirectory(path)) {
             try (Stream<Path> walk = Files.walk(path)) {
                 walk.filter(p -> p.toString().endsWith(".jar"))
+                    .filter(p -> !p.toString().contains(".java2graph") && !p.toString().contains(".decypher"))
                     .forEach(p -> cp.append(File.pathSeparator).append(p.toAbsolutePath()));
             } catch (Exception ignored) {}
         } else if (path.toString().endsWith(".jar")) {
+
             cp.append(File.pathSeparator).append(path.toAbsolutePath());
         }
     }
@@ -247,5 +286,18 @@ public class DelombokPass implements Pass {
             }
         } catch (Exception ignored) {}
         return javaFile.getParent();
+    }
+
+    private boolean isFileInIncrementalSet(Path path, Java2GraphConfig config) {
+        if (config.getIncrementalFiles() == null) return false;
+        Path absPath = path.toAbsolutePath().normalize();
+        for (Path inc : config.getIncrementalFiles()) {
+            // Incremental files might be relative to srcDir
+            Path absInc = inc.isAbsolute() ? inc : config.getSrcDir().resolve(inc);
+            if (absPath.equals(absInc.toAbsolutePath().normalize())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

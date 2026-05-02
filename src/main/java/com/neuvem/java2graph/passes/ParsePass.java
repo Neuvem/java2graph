@@ -41,7 +41,6 @@ import java.util.stream.Stream;
 public class ParsePass implements Pass {
     private static final Logger logger = LogManager.getLogger(ParsePass.class);
 
-
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
         logger.info("Beginning Streaming Two-Pass Parsing...");
@@ -53,9 +52,9 @@ public class ParsePass implements Pass {
                     .filter(p -> {
                         String s = p.toString().replace('\\', '/');
                         return !s.contains("/build/") && !s.contains("/target/") &&
-                               !s.contains("/out/") && !s.contains("/bin/") &&
-                               !s.contains("/.gradle/") && !s.contains("/.git/") &&
-                               !s.contains("/.idea/") && !s.contains("/.java2graph/");
+                                !s.contains("/out/") && !s.contains("/bin/") &&
+                                !s.contains("/.gradle/") && !s.contains("/.git/") &&
+                                !s.contains("/.idea/") && !s.contains("/.java2graph/");
                     })
                     .collect(Collectors.toList());
         }
@@ -119,21 +118,24 @@ public class ParsePass implements Pass {
             }
             if (!allUrls.isEmpty()) {
                 logger.info("Lazy-loading {} dependency JARs via native URLClassLoader...", allUrls.size());
-                java.net.URLClassLoader urlClassLoader = new java.net.URLClassLoader(allUrls.toArray(new java.net.URL[0]));
+                java.net.URLClassLoader urlClassLoader = new java.net.URLClassLoader(
+                        allUrls.toArray(new java.net.URL[0]));
                 context.jarClassLoader = urlClassLoader;
                 typeSolver.add(new ClassLoaderTypeSolver(urlClassLoader));
-                
+
                 if (config.isIndexAllJarEntries()) {
                     List<Path> jarsToScan = null;
-                    boolean isIncrementalMode = (config.getIncrementalFiles() != null && !config.getIncrementalFiles().isEmpty()) ||
-                                               (config.getIncrementalJars() != null && !config.getIncrementalJars().isEmpty());
-                    
+                    boolean isIncrementalMode = (config.getIncrementalFiles() != null
+                            && !config.getIncrementalFiles().isEmpty()) ||
+                            (config.getIncrementalJars() != null && !config.getIncrementalJars().isEmpty());
+
                     if (isIncrementalMode) {
                         // In incremental mode, only index the jars explicitly passed for re-indexing
                         if (config.getIncrementalJars() != null && !config.getIncrementalJars().isEmpty()) {
                             jarsToScan = config.getIncrementalJars();
                         } else {
-                            // Incremental source-only update, skip JAR indexing (they are already in the DB)
+                            // Incremental source-only update, skip JAR indexing (they are already in the
+                            // DB)
                             jarsToScan = java.util.Collections.emptyList();
                         }
                     } else {
@@ -153,7 +155,8 @@ public class ParsePass implements Pass {
 
         context.typeSolver = typeSolver;
         JavaSymbolSolver symbolSolver = new JavaSymbolSolver(typeSolver);
-        com.neuvem.java2graph.util.BudgetedTypeSolver budgetedTypeSolver = new com.neuvem.java2graph.util.BudgetedTypeSolver(typeSolver, 500);
+        com.neuvem.java2graph.util.BudgetedTypeSolver budgetedTypeSolver = new com.neuvem.java2graph.util.BudgetedTypeSolver(
+                typeSolver, 500);
         context.typeSolver = budgetedTypeSolver;
         symbolSolver = new JavaSymbolSolver(budgetedTypeSolver);
 
@@ -195,17 +198,21 @@ public class ParsePass implements Pass {
             filesToResolve.parallelStream().forEach(path -> {
                 try {
                     String content = java.nio.file.Files.readString(path);
-                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("import\\s+(?:static\\s+)?([a-zA-Z0-9_\\.]+)(?:\\.[a-zA-Z0-9_\\$]+)?\\s*;").matcher(content);
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                            .compile("import\\s+(?:static\\s+)?([a-zA-Z0-9_\\.]+)(?:\\.[a-zA-Z0-9_\\$]+)?\\s*;")
+                            .matcher(content);
                     while (m.find()) {
                         String imp = m.group(1);
                         suspectedFqns.add(imp);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             });
             ResolvePass.warmup(context, config, suspectedFqns);
         }
 
-        java.util.concurrent.ExecutorService watchdogExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        java.util.concurrent.ExecutorService watchdogExecutor = java.util.concurrent.Executors
+                .newSingleThreadExecutor();
         long batchMinTimeNs = Long.MAX_VALUE;
         long batchMaxTimeNs = 0;
         long batchTotalTimeNs = 0;
@@ -231,47 +238,59 @@ public class ParsePass implements Pass {
 
                     // Build the classAstIndex entry for this CU (used for field lookups)
                     cu.findAll(TypeDeclaration.class).forEach(td -> {
-                        ((TypeDeclaration<?>) td).getFullyQualifiedName().ifPresent(fqn ->
-                                classAstIndex.put(fqn, (TypeDeclaration<?>) td));
+                        ((TypeDeclaration<?>) td).getFullyQualifiedName()
+                                .ifPresent(fqn -> classAstIndex.put(fqn, (TypeDeclaration<?>) td));
                     });
 
                     // Resolve immediately using the ResolverVisitor, guarded by a 5-sec watchdog
                     String relativePath = config.getSrcDir().relativize(path).toString();
                     String absolutePath = path.toAbsolutePath().toString();
                     java.util.concurrent.Future<?> future = watchdogExecutor.submit(() -> {
-                        cu.accept(new ResolvePass.ResolverVisitor(context, config, classAstIndex, cu, absolutePath), null);
+                        cu.accept(new ResolvePass.ResolverVisitor(context, config, classAstIndex, cu, relativePath),
+                                null);
                         return null;
                     });
+
                     try {
                         future.get(5, java.util.concurrent.TimeUnit.SECONDS);
                     } catch (java.util.concurrent.TimeoutException te) {
                         future.cancel(true);
-                        // CRITICAL FIX: The previous file locked the worker thread into an uninterruptible infinite loop.
-                        // We MUST abandon this thread pool and create a new one, or ALL subsequent files will timeout with 0 lookups!
+                        // CRITICAL FIX: The previous file locked the worker thread into an
+                        // uninterruptible infinite loop.
+                        // We MUST abandon this thread pool and create a new one, or ALL subsequent
+                        // files will timeout with 0 lookups!
                         watchdogExecutor.shutdownNow();
                         watchdogExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
-                        
+
                         String lastSym = com.neuvem.java2graph.util.ResolutionTracer.getLastSymbol();
                         String lastNode = com.neuvem.java2graph.util.ResolutionTracer.getLastNode();
-                        logger.warn("Warning: File {} took > 5s to resolve (lookups: {})!", relativePath, budgetedTypeSolver.getCurrentCount());
-                        if (lastSym != null) logger.warn("  Last Symbol: {}", lastSym);
-                        if (lastNode != null) logger.warn("  Last Node: {}", lastNode);
+                        logger.warn("Warning: File {} took > 5s to resolve (lookups: {})!", relativePath,
+                                budgetedTypeSolver.getCurrentCount());
+                        if (lastSym != null)
+                            logger.warn("  Last Symbol: {}", lastSym);
+                        if (lastNode != null)
+                            logger.warn("  Last Node: {}", lastNode);
                         logger.warn("  Falling back to fast heuristic...");
-                        fallbackToFast(context, config, classAstIndex, cu, absolutePath);
+                        fallbackToFast(context, config, classAstIndex, cu, relativePath);
+
                     } catch (java.util.concurrent.ExecutionException ee) {
                         Throwable cause = ee.getCause();
                         if (cause instanceof com.neuvem.java2graph.util.QuotaExceededException) {
                             String lastSym = com.neuvem.java2graph.util.ResolutionTracer.getLastSymbol();
                             logger.warn("Warning: File {} exceeded lookup quota!", relativePath);
-                            if (lastSym != null) logger.warn("  Last Symbol: {}", lastSym);
+                            if (lastSym != null)
+                                logger.warn("  Last Symbol: {}", lastSym);
                             logger.warn("  Falling back to fast heuristic...");
-                            fallbackToFast(context, config, classAstIndex, cu, absolutePath);
+                            fallbackToFast(context, config, classAstIndex, cu, relativePath);
+
                         } else if (cause instanceof com.neuvem.java2graph.util.ComplexityExceededException) {
                             String lastNode = com.neuvem.java2graph.util.ResolutionTracer.getLastNode();
                             logger.warn("Warning: File {} exceeded AST complexity limit!", relativePath);
-                            if (lastNode != null) logger.warn("  Last Node: {}", lastNode);
+                            if (lastNode != null)
+                                logger.warn("  Last Node: {}", lastNode);
                             logger.warn("  Falling back to fast heuristic...");
-                            fallbackToFast(context, config, classAstIndex, cu, absolutePath);
+                            fallbackToFast(context, config, classAstIndex, cu, relativePath);
+
                         } else {
                             logger.error("Error resolving {}: {}", relativePath, cause.getMessage());
                         }
@@ -302,14 +321,16 @@ public class ParsePass implements Pass {
             resolvedCount++;
             if (resolvedCount % 500 == 0 || resolvedCount == totalFiles) {
                 int batchSize = resolvedCount % 500 == 0 ? 500 : (resolvedCount % 500);
-                if (batchSize == 0) batchSize = 1; // safety fallback if processing cleanly chunks
+                if (batchSize == 0)
+                    batchSize = 1; // safety fallback if processing cleanly chunks
                 double avgMs = (batchTotalTimeNs / (double) batchSize) / 1_000_000.0;
                 double minMs = batchMinTimeNs / 1_000_000.0;
                 double maxMs = batchMaxTimeNs / 1_000_000.0;
-                
-                logger.info("  Progress: {} / {} files processed ({}.1f%%) | Batch ms/file: [Min: {}.1f, Avg: {}.1f, Max: {}.1f]",
+
+                logger.info(
+                        "  Progress: {} / {} files processed ({}.1f%%) | Batch ms/file: [Min: {}.1f, Avg: {}.1f, Max: {}.1f]",
                         resolvedCount, totalFiles, (resolvedCount * 100.0) / totalFiles, minMs, avgMs, maxMs);
-                
+
                 batchMinTimeNs = Long.MAX_VALUE;
                 batchMaxTimeNs = 0;
                 batchTotalTimeNs = 0;
@@ -335,10 +356,13 @@ public class ParsePass implements Pass {
     private void indexJarSurfaceArea(GraphContext context, Path path) {
         if (Files.isDirectory(path)) {
             try (Stream<Path> paths = Files.walk(path)) {
-                paths.filter(p -> p.toString().endsWith(".jar")).forEach(p -> scanJar(context, p));
+                paths.filter(p -> p.toString().endsWith(".jar"))
+                        .filter(p -> !p.toString().contains(".java2graph") && !p.toString().contains(".decypher"))
+                        .forEach(p -> scanJar(context, p));
             } catch (IOException e) {
                 System.err.println("Warning: Failed to walk jar directory: " + path);
             }
+
         } else if (Files.exists(path) && path.toString().endsWith(".jar")) {
             scanJar(context, path);
         }
@@ -352,7 +376,8 @@ public class ParsePass implements Pass {
                 if (entry.getName().endsWith(".class") && !entry.getName().contains("$")) {
                     try (InputStream is = jarFile.getInputStream(entry)) {
                         ClassReader reader = new ClassReader(is);
-                        reader.accept(new SurfaceAreaClassVisitor(context, jarPath.toAbsolutePath().toString()), ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                        reader.accept(new SurfaceAreaClassVisitor(context, jarPath.toAbsolutePath().toString()),
+                                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
                     } catch (Exception e) {
                         // Skip problematic classes
                     }
@@ -366,16 +391,19 @@ public class ParsePass implements Pass {
     private void scanAndAddJars(java.util.List<java.net.URL> urls, Path path) {
         if (Files.isDirectory(path)) {
             try (Stream<Path> paths = Files.walk(path)) {
-                paths.filter(p -> p.toString().endsWith(".jar")).forEach(p -> {
-                    try {
-                        urls.add(p.toUri().toURL());
-                    } catch (Exception e) {
-                        System.err.println("Failed to resolve URL for jar: " + p);
-                    }
-                });
+                paths.filter(p -> p.toString().endsWith(".jar"))
+                        .filter(p -> !p.toString().contains(".java2graph") && !p.toString().contains(".decypher"))
+                        .forEach(p -> {
+                            try {
+                                urls.add(p.toUri().toURL());
+                            } catch (Exception e) {
+                                System.err.println("Failed to resolve URL for jar: " + p);
+                            }
+                        });
             } catch (Exception e) {
                 System.err.println("Failed to read jar directory: " + path);
             }
+
         } else if (Files.exists(path) && path.toString().endsWith(".jar")) {
             try {
                 urls.add(path.toUri().toURL());
@@ -385,7 +413,10 @@ public class ParsePass implements Pass {
         }
     }
 
-    private void fallbackToFast(GraphContext context, Java2GraphConfig config, Map<String, com.github.javaparser.ast.body.TypeDeclaration<?>> classAstIndex, com.github.javaparser.ast.CompilationUnit cu, String absolutePath) {
+    private void fallbackToFast(GraphContext context, Java2GraphConfig config,
+            Map<String, com.github.javaparser.ast.body.TypeDeclaration<?>> classAstIndex,
+            com.github.javaparser.ast.CompilationUnit cu, String filePath) {
+
         Java2GraphConfig fastConfig = Java2GraphConfig.builder()
                 .srcDir(config.getSrcDir())
                 .jarPaths(config.getJarPaths())
@@ -398,7 +429,8 @@ public class ParsePass implements Pass {
                 .decompile(config.isDecompile())
                 .cacheDir(config.getCacheDir())
                 .build();
-        cu.accept(new ResolvePass.ResolverVisitor(context, fastConfig, classAstIndex, cu, absolutePath), null);
+        cu.accept(new ResolvePass.ResolverVisitor(context, fastConfig, classAstIndex, cu, filePath), null);
+
     }
 
     private static void logMemory(String label) {
@@ -422,10 +454,11 @@ public class ParsePass implements Pass {
         }
 
         @Override
-        public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+        public void visit(int version, int access, String name, String signature, String superName,
+                String[] interfaces) {
             this.classFqn = name.replace('/', '.');
             this.isInterface = (access & Opcodes.ACC_INTERFACE) != 0;
-            
+
             context.classes.computeIfAbsent(classFqn, fqn -> ClassNode.builder()
                     .id(fqn).fqn(fqn).name(fqn.contains(".") ? fqn.substring(fqn.lastIndexOf('.') + 1) : fqn)
                     .isInterface(isInterface).isExternal(true).declarationCode("// external class from " + jarPath)
@@ -435,7 +468,8 @@ public class ParsePass implements Pass {
             if (superName != null && !superName.equals("java/lang/Object")) {
                 String parentFqn = superName.replace('/', '.');
                 ensureClassStub(parentFqn);
-                context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(classFqn).parentFqn(parentFqn).type("EXTENDS").build());
+                context.inheritanceEdges
+                        .add(InheritanceEdge.builder().childFqn(classFqn).parentFqn(parentFqn).type("EXTENDS").build());
             }
 
             if (interfaces != null) {
@@ -443,7 +477,8 @@ public class ParsePass implements Pass {
                     String parentFqn = intf.replace('/', '.');
                     ensureClassStub(parentFqn);
                     String relType = isInterface ? "EXTENDS" : "IMPLEMENTS";
-                    context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(classFqn).parentFqn(parentFqn).type(relType).build());
+                    context.inheritanceEdges.add(
+                            InheritanceEdge.builder().childFqn(classFqn).parentFqn(parentFqn).type(relType).build());
                 }
             }
         }
@@ -471,24 +506,26 @@ public class ParsePass implements Pass {
         }
 
         @Override
-        public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+        public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
+                String[] exceptions) {
             if ((access & Opcodes.ACC_PUBLIC) != 0) {
                 Type[] argTypes = Type.getArgumentTypes(descriptor);
                 StringBuilder sb = new StringBuilder("(");
                 for (int i = 0; i < argTypes.length; i++) {
                     sb.append(argTypes[i].getClassName());
-                    if (i < argTypes.length - 1) sb.append(",");
+                    if (i < argTypes.length - 1)
+                        sb.append(",");
                 }
                 sb.append(")");
                 String prettySig = sb.toString();
                 String methodFqn = classFqn + "." + name + prettySig;
-                
+
                 context.methods.computeIfAbsent(methodFqn, fqn -> MethodNode.builder()
                         .id(fqn).fqn(fqn).name(name).signature(prettySig)
                         .containingClassFqn(classFqn).isExternal(true).sourceCode("// external method")
                         .filePath(jarPath)
                         .build());
-                
+
                 return new MethodVisitor(Opcodes.ASM9) {
                     @Override
                     public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
