@@ -13,4 +13,5 @@ public class GraphContext {
     // Store the type solver for use across passes (symbol-solver resolution)
     public Object typeSolver;
     public DecompileCache decompileCache;
+    public ClassLoader jarClassLoader;
 }

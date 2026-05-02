@@ -10,6 +10,8 @@ import picocli.CommandLine.Option;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -48,6 +50,24 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--cache-dir"}, description = "Directory to cache decompiled source files")
     private Path cacheDir;
 
+    @Option(names = {"--decompiler"}, description = "Decompiler to use: CFR, VINEFLOWER", defaultValue = "CFR")
+    private Java2GraphConfig.DecompilerType decompilerType;
+
+    @Option(names = {"--incremental"}, split = ",", description = "List of files to re-index (incremental mode)")
+    private List<Path> incrementalFiles;
+
+    @Option(names = {"--incremental-jars"}, split = ",", description = "List of JARs to re-index (incremental mode)")
+    private List<Path> incrementalJars;
+
+    @Option(names = {"--incremental-list"}, description = "Path to a file containing a list of source files to re-index (one per line)")
+    private Path incrementalFileList;
+
+    @Option(names = {"--jars-list"}, description = "Path to a file containing a list of dependency JARs or directories (one per line)")
+    private Path jarPathsList;
+
+    @Option(names = {"--incremental-jars-list"}, description = "Path to a file containing a list of JARs to re-index (one per line)")
+    private Path incrementalJarPathsList;
+
     public static void main(String[] args) {
         int exitCode = new CommandLine(new Main()).execute(args);
         System.exit(exitCode);
@@ -58,6 +78,31 @@ public class Main implements Callable<Integer> {
         logger.info("Starting Java2Graph...");
 
         System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", String.valueOf(threads));
+
+        // Merge file-based lists into the main lists
+        if (jarPathsList != null) {
+            if (jarPaths == null) jarPaths = new ArrayList<>();
+            mergePathsFromListFile(jarPaths, jarPathsList);
+        }
+        if (incrementalFileList != null) {
+            if (incrementalFiles == null) incrementalFiles = new ArrayList<>();
+            mergePathsFromListFile(incrementalFiles, incrementalFileList);
+        }
+        if (incrementalJarPathsList != null) {
+            if (incrementalJars == null) incrementalJars = new ArrayList<>();
+            mergePathsFromListFile(incrementalJars, incrementalJarPathsList);
+        }
+
+        // Determine if this is an incremental run based on the presence of ANY incremental flag.
+        // If any incremental flag was passed (even with an empty list), we MUST ensure
+        // both lists are non-null to prevent subsequent passes from defaulting to a 'full run'.
+        boolean anyIncrementalFlag = incrementalFiles != null || incrementalFileList != null ||
+                                     incrementalJars != null || incrementalJarPathsList != null;
+
+        if (anyIncrementalFlag) {
+            if (incrementalFiles == null) incrementalFiles = new ArrayList<>();
+            if (incrementalJars == null) incrementalJars = new ArrayList<>();
+        }
 
         // Default cache dir to .java2graph/cache in the current directory if not specified
         if (cacheDir == null) {
@@ -74,7 +119,10 @@ public class Main implements Callable<Integer> {
                 .threads(threads)
                 .indexAllJarEntries(indexAllJarEntries)
                 .decompile(!noDecompile)
+                .decompilerType(decompilerType)
                 .cacheDir(cacheDir)
+                .incrementalFiles(incrementalFiles)
+                .incrementalJars(incrementalJars)
                 .build();
 
         GraphContext context = new GraphContext();
@@ -87,11 +135,34 @@ public class Main implements Callable<Integer> {
                 new ExportPass()
         };
 
+        // Prepare phase: Initialize resources early (e.g. open database to claim native memory)
+        for (Pass pass : passes) {
+            pass.prepare(config, context);
+        }
+
         for (Pass pass : passes) {
             pass.execute(config, context);
         }
 
         logger.info("Java2Graph processing completed successfully.");
         return 0;
+    }
+
+    private void mergePathsFromListFile(List<Path> target, Path listFile) {
+        if (listFile == null || !Files.exists(listFile)) {
+            return;
+        }
+        try {
+            List<String> lines = Files.readAllLines(listFile);
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                target.add(Paths.get(line));
+            }
+        } catch (Exception e) {
+            logger.error("Failed to read list file {}: {}", listFile, e.getMessage());
+        }
     }
 }

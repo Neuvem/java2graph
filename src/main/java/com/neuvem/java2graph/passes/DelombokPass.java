@@ -47,7 +47,7 @@ public class DelombokPass implements Pass {
                     return !s.contains("/build/") && !s.contains("/target/") && 
                            !s.contains("/out/") && !s.contains("/bin/") && 
                            !s.contains("/.gradle/") && !s.contains("/.git/") &&
-                           !s.contains("/.idea/");
+                           !s.contains("/.idea/") && !s.contains("/.java2graph/");
                 })
                 .forEach(javaFile -> {
                     try {

@@ -10,7 +10,7 @@ public class ClassNode {
     private boolean isInterface;
     private String declarationCode;
     private String filePath;
-    private List<String> annotations = new ArrayList<>();
+    private List<String> annotations;
     private boolean isExternal;
 
     public ClassNode() {}
@@ -33,7 +33,10 @@ public class ClassNode {
     public String getFilePath() { return filePath; }
     public void setFilePath(String filePath) { this.filePath = filePath; }
 
-    public List<String> getAnnotations() { return annotations; }
+    public List<String> getAnnotations() { 
+        if (annotations == null) annotations = new ArrayList<>();
+        return annotations; 
+    }
     public void setAnnotations(List<String> annotations) { this.annotations = annotations; }
 
     public boolean isExternal() { return isExternal; }

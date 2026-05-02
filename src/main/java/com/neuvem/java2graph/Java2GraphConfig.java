@@ -12,8 +12,16 @@ public class Java2GraphConfig {
     private boolean enableLombok;
     private boolean fastResolve;
     private Path cacheDir;
+    public enum DecompilerType {
+        CFR,
+        VINEFLOWER
+    }
+
     private boolean indexAllJarEntries = true;
     private boolean decompile = true;
+    private DecompilerType decompilerType = DecompilerType.CFR;
+    private List<Path> incrementalFiles;
+    private List<Path> incrementalJars;
 
     public Java2GraphConfig() {}
 
@@ -47,6 +55,15 @@ public class Java2GraphConfig {
     public boolean isDecompile() { return decompile; }
     public void setDecompile(boolean decompile) { this.decompile = decompile; }
 
+    public DecompilerType getDecompilerType() { return decompilerType; }
+    public void setDecompilerType(DecompilerType decompilerType) { this.decompilerType = decompilerType; }
+
+    public List<Path> getIncrementalFiles() { return incrementalFiles; }
+    public void setIncrementalFiles(List<Path> incrementalFiles) { this.incrementalFiles = incrementalFiles; }
+
+    public List<Path> getIncrementalJars() { return incrementalJars; }
+    public void setIncrementalJars(List<Path> incrementalJars) { this.incrementalJars = incrementalJars; }
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
@@ -61,6 +78,9 @@ public class Java2GraphConfig {
         public Builder cacheDir(Path cacheDir) { config.cacheDir = cacheDir; return this; }
         public Builder indexAllJarEntries(boolean indexAllJarEntries) { config.indexAllJarEntries = indexAllJarEntries; return this; }
         public Builder decompile(boolean decompile) { config.decompile = decompile; return this; }
+        public Builder decompilerType(DecompilerType decompilerType) { config.decompilerType = decompilerType; return this; }
+        public Builder incrementalFiles(List<Path> incrementalFiles) { config.incrementalFiles = incrementalFiles; return this; }
+        public Builder incrementalJars(List<Path> incrementalJars) { config.incrementalJars = incrementalJars; return this; }
         public Java2GraphConfig build() { return config; }
     }
 }

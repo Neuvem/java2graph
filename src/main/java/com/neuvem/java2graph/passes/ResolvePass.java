@@ -23,6 +23,12 @@ import org.benf.cfr.reader.api.CfrDriver;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.InputStream;
+import java.util.jar.Manifest;
+import org.jetbrains.java.decompiler.main.Fernflower;
+import org.jetbrains.java.decompiler.main.extern.IBytecodeProvider;
+import org.jetbrains.java.decompiler.main.extern.IResultSaver;
+import org.jetbrains.java.decompiler.main.extern.IFernflowerLogger;
 
 public class ResolvePass implements Pass {
     private static final Logger logger = LogManager.getLogger(ResolvePass.class);
@@ -56,6 +62,26 @@ public class ResolvePass implements Pass {
         });
     }
 
+    public static void warmup(GraphContext context, Java2GraphConfig config, Collection<String> classFqns) {
+        if (!config.isDecompile() || context.decompileCache == null) return;
+        logger.info("  Parallel warm-up of {} suspected external classes...", classFqns.size());
+        classFqns.parallelStream().forEach(classFqn -> {
+            if (classFqn == null || classFqn.isEmpty() || classFqn.contains("*") || classFqn.startsWith("java.") || classFqn.startsWith("javax.")) return;
+            
+            if (context.decompileCache.get(classFqn).isEmpty()) {
+                String source;
+                if (config.getDecompilerType() == Java2GraphConfig.DecompilerType.VINEFLOWER) {
+                    source = decompileWithVineflower(classFqn, context, config);
+                } else {
+                    source = decompileWithCFR(classFqn, config);
+                }
+                if (source != null) {
+                    context.decompileCache.put(classFqn, source);
+                }
+            }
+        });
+    }
+
     public static void decompileAndFleshOut(GraphContext context, Java2GraphConfig config, String classFqn) {
         if (!config.isDecompile() || classFqn == null || classFqn.startsWith("<unresolvedNamespace>") || classFqn.equals("UNKNOWN") || classFqn.equals("java.lang.Object")) {
             return;
@@ -74,7 +100,12 @@ public class ResolvePass implements Pass {
         if (cachedSource.isPresent()) {
             source = cachedSource.get();
         } else {
-            source = decompileWithCFR(classFqn, config);
+            if (config.getDecompilerType() == Java2GraphConfig.DecompilerType.VINEFLOWER) {
+                source = decompileWithVineflower(classFqn, context, config);
+            } else {
+                source = decompileWithCFR(classFqn, config);
+            }
+            
             if (source != null) {
                 context.decompileCache.put(classFqn, source);
             }
@@ -111,6 +142,84 @@ public class ResolvePass implements Pass {
             return sb.length() > 0 ? sb.toString() : null;
         } catch (Exception e) {
             logger.warn("Warning: CFR failed to decompile {}: {}", classFqn, e.getMessage());
+            return null;
+        }
+    }
+
+    private static String decompileWithVineflower(String classFqn, GraphContext context, Java2GraphConfig config) {
+        final Map<String, String> results = new HashMap<>();
+        
+        IBytecodeProvider provider = (externalPath, internalPath) -> {
+            String path = (internalPath != null) ? internalPath : externalPath;
+            if (path == null) return null;
+            
+            String resourcePath;
+            if (path.contains("virtual.class")) {
+                resourcePath = classFqn.replace('.', '/') + ".class";
+            } else {
+                String cleanPath = path;
+                if (cleanPath.endsWith(".class")) {
+                    cleanPath = cleanPath.substring(0, cleanPath.length() - 6);
+                }
+                resourcePath = cleanPath.replace('.', '/') + ".class";
+            }
+            
+            ClassLoader loader = context.jarClassLoader != null ? context.jarClassLoader : Thread.currentThread().getContextClassLoader();
+            try (InputStream is = loader.getResourceAsStream(resourcePath)) {
+                if (is != null) {
+                    return is.readAllBytes();
+                } else {
+                    logger.debug("Vineflower provider: resource NOT found: {}", resourcePath);
+                }
+            } catch (Exception e) {
+                logger.warn("Vineflower provider error for {}: {}", resourcePath, e.getMessage());
+            }
+            return null;
+        };
+
+        IResultSaver saver = new IResultSaver() {
+            @Override public void saveClassFile(String path, String qname, String entryName, String content, int[] mapping) {
+                if (qname != null) results.put(qname, content);
+            }
+            @Override public void saveFolder(String path) {}
+            @Override public void copyFile(String source, String path, String entryName) {}
+            @Override public void saveDirEntry(String path, String archiveName, String entryName) {}
+            @Override public void copyEntry(String source, String path, String archiveName, String entryName) {}
+            @Override public void saveClassEntry(String path, String archiveName, String entryName, String content, String mapping) {
+                if (entryName != null) {
+                    results.put(entryName.replace(".class", ""), content);
+                }
+            }
+            @Override public void createArchive(String path, String archiveName, Manifest manifest) {}
+            @Override public void closeArchive(String path, String archiveName) {}
+        };
+
+        Map<String, Object> options = new HashMap<>();
+        options.put("hdc", "0"); // Hide default constructor
+        options.put("ind", "    "); // Indentation
+        
+        Fernflower decompiler = new Fernflower(provider, saver, options, new IFernflowerLogger() {
+            @Override public void writeMessage(String message, Severity severity) {
+                if (severity == Severity.ERROR) {
+                    logger.error("Vineflower [ERROR]: {}", message);
+                } else if (severity == Severity.WARN) {
+                    logger.debug("Vineflower [WARN]: {}", message);
+                }
+            }
+            @Override public void writeMessage(String message, Severity severity, Throwable t) {
+                logger.error("Vineflower [{}]: {} - {}", severity, message, t.getMessage());
+            }
+        });
+
+        try {
+            decompiler.addSource(new java.io.File("virtual.class"));
+            decompiler.decompileContext();
+            
+            if (results.containsKey("virtual")) return results.get("virtual");
+            // Fallback: Return the first result if any (useful if Vineflower used the internal class name as key)
+            return results.isEmpty() ? null : results.values().iterator().next();
+        } catch (Exception e) {
+            logger.warn("Warning: Vineflower failed to decompile {}: {}", classFqn, e.getMessage());
             return null;
         }
     }
