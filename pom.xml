@@ -48,6 +48,11 @@
             <version>0.152</version>
         </dependency>
         <dependency>
+            <groupId>org.vineflower</groupId>
+            <artifactId>vineflower</artifactId>
+            <version>1.10.1</version>
+        </dependency>
+        <dependency>
             <groupId>org.ow2.asm</groupId>
             <artifactId>asm</artifactId>
             <version>9.6</version>
