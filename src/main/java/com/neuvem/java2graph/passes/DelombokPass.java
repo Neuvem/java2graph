@@ -2,6 +2,8 @@ package com.neuvem.java2graph.passes;
 
 import com.neuvem.java2graph.Java2GraphConfig;
 import com.neuvem.java2graph.models.GraphContext;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -13,6 +15,7 @@ import java.util.List;
 import java.util.stream.Stream;
 
 public class DelombokPass implements Pass {
+    private static final Logger logger = LogManager.getLogger(DelombokPass.class);
 
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
@@ -20,7 +23,7 @@ public class DelombokPass implements Pass {
             return;
         }
 
-        System.out.println("Processing Lombok annotations...");
+        logger.info("Processing Lombok annotations...");
 
         Path delombokDir = Files.createTempDirectory("delombok");
         String javaHome = System.getProperty("java.home");
@@ -44,7 +47,7 @@ public class DelombokPass implements Pass {
                     return !s.contains("/build/") && !s.contains("/target/") && 
                            !s.contains("/out/") && !s.contains("/bin/") && 
                            !s.contains("/.gradle/") && !s.contains("/.git/") &&
-                           !s.contains("/.idea/");
+                           !s.contains("/.idea/") && !s.contains("/.java2graph/");
                 })
                 .forEach(javaFile -> {
                     try {
@@ -59,9 +62,9 @@ public class DelombokPass implements Pass {
             sourceRoots.add(config.getSrcDir());
         }
 
-        System.out.println("Executing Mirrored Delombok on " + sourceRoots.size() + " True Roots...");
+        logger.info("Executing Mirrored Delombok on {} True Roots...", sourceRoots.size());
         for (Path root : sourceRoots) {
-            System.out.println("  Found True Root: " + config.getSrcDir().relativize(root));
+            logger.info("  Found True Root: {}", config.getSrcDir().relativize(root));
         }
 
         // Build a global sourcepath containing all true roots
@@ -72,7 +75,7 @@ public class DelombokPass implements Pass {
             globalSourcePath.append(root.toAbsolutePath());
         }
 
-        System.out.println("Executing Mirrored Delombok on " + sourceRoots.size() + " roots...");
+        // logger.info("Executing Mirrored Delombok on {} roots...", sourceRoots.size());
 
         // Discover the Lombok JAR in the current tool classpath to isolate the Delombok process
         String lombokJar = null;
@@ -84,7 +87,7 @@ public class DelombokPass implements Pass {
         }
         String workerCP = (lombokJar != null) ? lombokJar : System.getProperty("java.class.path");
         if (lombokJar != null) {
-            System.out.println("  Isolated Delombok Engine: " + new File(lombokJar).getName());
+            logger.info("  Isolated Delombok Engine: {}", new File(lombokJar).getName());
         }
 
         for (Path root : sourceRoots) {
@@ -168,7 +171,7 @@ public class DelombokPass implements Pass {
             command.add("--nocopy");
             command.add("@" + javaFilesListFile.toAbsolutePath().toString());
 
-            System.out.println("  Delombok-ing root: " + relativePath + " (" + javaFiles.size() + " files)");
+            logger.info("  Delombok-ing root: {} ({} files)", relativePath, javaFiles.size());
             
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -186,7 +189,7 @@ public class DelombokPass implements Pass {
 
             int exitCode = process.waitFor();
             if (exitCode != 0) {
-                System.err.println("    [Lombok] WARNING: Delombok reported compilation errors for root " + relativePath + " (exit code " + exitCode + "). Output will normally be best-effort.");
+                logger.warn("    [Lombok] WARNING: Delombok reported compilation errors for root {} (exit code {}). Output will normally be best-effort.", relativePath, exitCode);
                 // We intentionally DO NOT throw an exception here because Delombok correctly generates
                 // output files even when Javac encounters missing symbols or unresolved dependencies.
             }
@@ -206,7 +209,7 @@ public class DelombokPass implements Pass {
 
         // Update the src directory for subsequent passes
         config.setSrcDir(delombokDir);
-        System.out.println("Lombok processing complete. Mirrored to: " + delombokDir);
+        logger.info("Lombok processing complete. Mirrored to: {}", delombokDir);
     }
 
     private void collectJars(Path path, StringBuilder cp) {

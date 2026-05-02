@@ -1,5 +1,6 @@
 package com.neuvem.java2graph.models;
 
+import com.neuvem.java2graph.util.DecompileCache;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class GraphContext {
@@ -11,4 +12,6 @@ public class GraphContext {
     
     // Store the type solver for use across passes (symbol-solver resolution)
     public Object typeSolver;
+    public DecompileCache decompileCache;
+    public ClassLoader jarClassLoader;
 }
