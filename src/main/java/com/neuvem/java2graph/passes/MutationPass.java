@@ -7,6 +7,7 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.SimpleName;
@@ -39,7 +40,6 @@ public class MutationPass implements Pass {
 
     // Graph connection — null when no DB is available
     private Database db;
-    private Connection conn;
 
     @Override
     public void execute(Java2GraphConfig config, GraphContext context) throws Exception {
@@ -319,7 +319,13 @@ public class MutationPass implements Pass {
             boolean[] changed = {false};
             cu.findAll(MethodDeclaration.class).forEach(md -> {
                 if (md.getNameAsString().equals(methodName)) {
-                    md.setBody(StaticJavaParser.parseBlock(newSource));
+                    var newBody = StaticJavaParser.parseBlock(newSource);
+                    md.setBody(newBody);
+                    
+                    // Handle imports
+                    addExplicitImports(cu, op);
+                    autoResolveImports(cu, newBody);
+                    
                     changed[0] = true;
                 }
             });
@@ -345,7 +351,13 @@ public class MutationPass implements Pass {
             boolean[] changed = {false};
             cu.findAll(ClassOrInterfaceDeclaration.class).forEach(cd -> {
                 if (cd.getNameAsString().equals(className)) {
-                    cd.addMember(StaticJavaParser.parseMethodDeclaration(newMethodSource));
+                    var newMethod = StaticJavaParser.parseMethodDeclaration(newMethodSource);
+                    cd.addMember(newMethod);
+
+                    // Handle imports
+                    addExplicitImports(cu, op);
+                    autoResolveImports(cu, newMethod);
+
                     changed[0] = true;
                 }
             });
@@ -407,6 +419,63 @@ public class MutationPass implements Pass {
             return changed[0];
         });
         return modified ? 1 : 0;
+    }
+
+    // -----------------------------------------------------------------------
+    // Import Management
+    // -----------------------------------------------------------------------
+
+    private void addExplicitImports(CompilationUnit cu, JsonObject op) {
+        if (op.has("imports") && op.get("imports").isJsonArray()) {
+            JsonArray imports = op.getAsJsonArray("imports");
+            for (JsonElement imp : imports) {
+                String importFqn = imp.getAsString();
+                if (!cu.getImports().stream().anyMatch(i -> i.getNameAsString().equals(importFqn))) {
+                    cu.addImport(importFqn);
+                    logger.info("Added explicit import: {}", importFqn);
+                }
+            }
+        }
+    }
+
+    private void autoResolveImports(CompilationUnit cu, Node newNode) {
+        if (db == null) return; // Need graph to resolve names
+
+        Set<String> typesInNode = new HashSet<>();
+        newNode.findAll(ClassOrInterfaceType.class).forEach(type -> {
+            // Only look at simple names (not FQNs which don't need imports)
+            if (!type.getNameAsString().contains(".")) {
+                typesInNode.add(type.getNameAsString());
+            }
+        });
+
+        for (String typeName : typesInNode) {
+            // Skip if already imported or in the same package
+            if (isTypeAlreadyAvailable(cu, typeName)) continue;
+
+            // Query graph for the FQN of this class name
+            String escaped = escapeForCypher(typeName);
+            List<String> fqns = queryGraphForStrings("MATCH (c:Class {name: '" + escaped + "'}) RETURN c.fqn");
+
+            if (fqns.size() == 1) {
+                String fqn = fqns.get(0);
+                cu.addImport(fqn);
+                logger.info("Auto-resolved and added import for {}: {}", typeName, fqn);
+            } else if (fqns.size() > 1) {
+                logger.warn("Ambiguous type '{}' found in graph ({} matches). Skipping auto-import.", typeName, fqns.size());
+            }
+        }
+    }
+
+    private boolean isTypeAlreadyAvailable(CompilationUnit cu, String typeName) {
+        // Check explicit imports
+        if (cu.getImports().stream().anyMatch(i -> i.getNameAsString().endsWith("." + typeName))) return true;
+        
+        // Check java.lang (implicit)
+        List<String> javaLangClasses = Arrays.asList("String", "Integer", "Long", "Double", "Boolean", "Object", "System", "Exception", "RuntimeException");
+        if (javaLangClasses.contains(typeName)) return true;
+
+        return false;
     }
 
     // -----------------------------------------------------------------------
@@ -491,30 +560,28 @@ public class MutationPass implements Pass {
         }
         try {
             db = new Database(dbPath.toString());
-            conn = new Connection(db);
             logger.info("Connected to code graph at {}", dbPath);
         } catch (Exception e) {
             logger.warn("Failed to connect to code graph at {}: {}. Running in single-file mode.", dbPath, e.getMessage());
+            if (db != null) {
+                try { db.close(); } catch (Exception closeEx) { /* ignore */ }
+            }
             db = null;
-            conn = null;
         }
     }
 
     private void closeGraphConnection() {
-        if (conn != null) {
-            try { conn.close(); } catch (Exception e) { /* ignore */ }
-        }
         if (db != null) {
             try { db.close(); } catch (Exception e) { /* ignore */ }
         }
-        conn = null;
         db = null;
     }
 
     private List<String> queryGraphForStrings(String cypher) {
         List<String> results = new ArrayList<>();
-        if (conn == null) return results;
-        try (QueryResult res = conn.query(cypher)) {
+        if (db == null) return results;
+        try (Connection localConn = new Connection(db);
+             QueryResult res = localConn.query(cypher)) {
             if (!res.isSuccess()) {
                 logger.warn("Graph query failed: {} | Query: {}", res.getErrorMessage(), cypher);
                 return results;
@@ -541,7 +608,7 @@ public class MutationPass implements Pass {
         String simpleName = extractSimpleName(classFqn);
         String escaped = escapeForCypher(classFqn);
 
-        if (conn != null) {
+        if (db != null) {
             // Files containing methods that call methods of this class
             List<String> callerFiles = queryGraphForStrings(
                 "MATCH (c:Class {fqn: '" + escaped + "'})-[:Defines]->(m:Method)<-[:Calls]-(caller:Method) " +
@@ -590,7 +657,7 @@ public class MutationPass implements Pass {
         String methodName = extractSimpleName(methodFqn);
         String escaped = escapeForCypher(methodFqn);
 
-        if (conn != null) {
+        if (db != null) {
             List<String> callerFiles = queryGraphForStrings(
                 "MATCH (m:Method {fqn: '" + escaped + "'})<-[:Calls]-(caller:Method) " +
                 "WHERE caller.filePath <> '' RETURN DISTINCT caller.filePath");
@@ -630,7 +697,7 @@ public class MutationPass implements Pass {
      */
     private Path findFileForClass(Path srcDir, String classFqn) {
         // 1. Try graph
-        if (conn != null) {
+        if (db != null) {
             String escaped = escapeForCypher(classFqn);
             List<String> paths = queryGraphForStrings(
                 "MATCH (c:Class {fqn: '" + escaped + "'}) RETURN c.filePath");
@@ -648,7 +715,7 @@ public class MutationPass implements Pass {
      */
     private Path findFileForMethod(Path srcDir, String methodFqn) {
         // 1. Try graph (Method node has filePath)
-        if (conn != null) {
+        if (db != null) {
             String escaped = escapeForCypher(methodFqn);
             List<String> paths = queryGraphForStrings(
                 "MATCH (m:Method {fqn: '" + escaped + "'}) RETURN m.filePath");
@@ -677,11 +744,26 @@ public class MutationPass implements Pass {
     }
 
     private Path walkForFile(Path srcDir, String simpleName) {
+        // 1. Try to find an exact file name match first (e.g. MyClass.java)
+        try (var walk = Files.walk(srcDir)) {
+            Optional<Path> exact = walk.filter(p -> p.getFileName().toString().equals(simpleName + ".java")).findFirst();
+            if (exact.isPresent()) return exact.get();
+        } catch (IOException e) {
+            // ignore
+        }
+
+        // 2. Fallback: find any file that CONTAINS the word and looks like a declaration
         try (var walk = Files.walk(srcDir)) {
             return walk.filter(p -> p.toString().endsWith(".java"))
                     .filter(p -> {
                         try {
-                            return Files.readString(p).contains(simpleName);
+                            String content = Files.readString(p);
+                            if (!content.contains(simpleName)) return false;
+                            
+                            // Heuristic to check if it's likely a declaration rather than just a caller
+                            String regex = "(?s).*\\b(?:class|interface|enum|record)\\s+" + simpleName + "\\b.*" +
+                                           "|.*\\b" + simpleName + "\\s*\\(.*";
+                            return content.matches(regex);
                         } catch (IOException e) {
                             return false;
                         }

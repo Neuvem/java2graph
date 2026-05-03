@@ -171,10 +171,19 @@ public class ExportPass implements Pass {
             logger.info("Incremental mode detected. Preparing memory-efficient export...");
             if (config.getIncrementalFiles() != null) {
                 for (Path path : config.getIncrementalFiles()) {
+                    // Normalize to absolute first to ensure safe relativization
                     Path absPath = path.isAbsolute() ? path : config.getSrcDir().resolve(path);
                     absPath = absPath.normalize().toAbsolutePath();
-                    String p = absPath.toString();
-                    affectedPaths.add(p);
+                    
+                    // We must use relative paths for affectedPaths because the nodes in context
+                    // use relative paths (set in ParsePass.java via relativize).
+                    String relPath;
+                    try {
+                        relPath = config.getSrcDir().toAbsolutePath().relativize(absPath).toString();
+                    } catch (IllegalArgumentException e) {
+                        relPath = absPath.toString();
+                    }
+                    affectedPaths.add(relPath);
                 }
             }
             if (config.getIncrementalJars() != null) {
