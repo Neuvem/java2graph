@@ -83,6 +83,9 @@ public class ExportPass implements Pass {
             exportMethodDefinitionsCsv(config.getOutCsvDir(), context);
             exportFieldsCsv(config.getOutCsvDir(), context);
             exportDependsOnCsv(config.getOutCsvDir(), context);
+            exportParametersCsv(config.getOutCsvDir(), context);
+            exportVariablesCsv(config.getOutCsvDir(), context);
+            exportDataFlowCsv(config.getOutCsvDir(), context);
         }
 
         if (resolvedDbPath != null) {
@@ -195,6 +198,39 @@ public class ExportPass implements Pass {
         }
     }
 
+    private void exportParametersCsv(Path dir, GraphContext context) throws IOException {
+        try (FileWriter out = new FileWriter(dir.resolve("parameters.csv").toFile());
+                CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("id", "methodFqn", "name", "typeFqn", "index").build())) {
+            for (ParameterNode node : context.parameters.values()) {
+                if (node.getId() != null && !node.getId().isBlank()) {
+                    printer.printRecord(node.getId(), node.getMethodFqn(), node.getName(), node.getTypeFqn(), node.getIndex());
+                }
+            }
+        }
+    }
+
+    private void exportVariablesCsv(Path dir, GraphContext context) throws IOException {
+        try (FileWriter out = new FileWriter(dir.resolve("variables.csv").toFile());
+                CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("id", "methodFqn", "name", "typeFqn").build())) {
+            for (VariableNode node : context.variables.values()) {
+                if (node.getId() != null && !node.getId().isBlank()) {
+                    printer.printRecord(node.getId(), node.getMethodFqn(), node.getName(), node.getTypeFqn());
+                }
+            }
+        }
+    }
+
+    private void exportDataFlowCsv(Path dir, GraphContext context) throws IOException {
+        try (FileWriter out = new FileWriter(dir.resolve("data_flow.csv").toFile());
+                CSVPrinter printer = new CSVPrinter(out, CSVFormat.Builder.create().setHeader("sourceId", "targetId", "flowType").build())) {
+            for (DataFlowEdge edge : context.dataFlowEdges) {
+                if (edge.getSourceId() != null && edge.getTargetId() != null) {
+                    printer.printRecord(edge.getSourceId(), edge.getTargetId(), edge.getFlowType());
+                }
+            }
+        }
+    }
+
     private void exportLadybug(Java2GraphConfig config, GraphContext context) {
         Set<String> affectedPaths = new HashSet<>();
         if (isIncremental) {
@@ -263,6 +299,9 @@ public class ExportPass implements Pass {
                 executeOrThrow(conn, "CREATE NODE TABLE Field(id STRING, fqn STRING, name STRING, typeFqn STRING, containingClassFqn STRING, annotations STRING, filePath STRING, PRIMARY KEY (id))");
                 executeOrThrow(conn, "CREATE REL TABLE DependsOn(FROM Class TO Class, injectionType STRING)");
                 executeOrThrow(conn, "CREATE REL TABLE HasField(FROM Class TO Field)");
+                executeOrThrow(conn, "CREATE NODE TABLE Parameter(id STRING, methodFqn STRING, name STRING, typeFqn STRING, index INT64, PRIMARY KEY (id))");
+                executeOrThrow(conn, "CREATE NODE TABLE Variable(id STRING, methodFqn STRING, name STRING, typeFqn STRING, PRIMARY KEY (id))");
+                executeOrThrow(conn, "CREATE REL TABLE DataFlow(FROM Variable TO Parameter, FROM Parameter TO Parameter, FROM Field TO Parameter, FROM Variable TO Field, FROM Parameter TO Field, FROM Field TO Field, flowType STRING)");
 
                 Path tempDir = Files.createTempDirectory("ladybug_import");
 
@@ -381,6 +420,60 @@ public class ExportPass implements Pass {
                         }
                     }
                 }
+                
+                Set<String> paramIds = new HashSet<>();
+                Set<String> varIds = new HashSet<>();
+                
+                Path paramsCsv = tempDir.resolve("parameters.csv");
+                try (FileWriter out = new FileWriter(paramsCsv.toFile());
+                        CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
+                    for (ParameterNode node : context.parameters.values()) {
+                        if (node.getId() != null && !node.getId().isBlank()) {
+                            printer.printRecord(node.getId(), node.getMethodFqn(), node.getName(), node.getTypeFqn(), node.getIndex());
+                            paramIds.add(node.getId());
+                        }
+                    }
+                }
+
+                Path varsCsv = tempDir.resolve("variables.csv");
+                try (FileWriter out = new FileWriter(varsCsv.toFile());
+                        CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
+                    for (VariableNode node : context.variables.values()) {
+                        if (node.getId() != null && !node.getId().isBlank()) {
+                            printer.printRecord(node.getId(), node.getMethodFqn(), node.getName(), node.getTypeFqn());
+                            varIds.add(node.getId());
+                        }
+                    }
+                }
+
+                Path dfVP = tempDir.resolve("df_vp.csv");
+                Path dfPP = tempDir.resolve("df_pp.csv");
+                Path dfFP = tempDir.resolve("df_fp.csv");
+                Path dfVF = tempDir.resolve("df_vf.csv");
+                Path dfPF = tempDir.resolve("df_pf.csv");
+                Path dfFF = tempDir.resolve("df_ff.csv");
+                
+                try (
+                    FileWriter fwVP = new FileWriter(dfVP.toFile()); CSVPrinter pVP = new CSVPrinter(fwVP, CSVFormat.DEFAULT);
+                    FileWriter fwPP = new FileWriter(dfPP.toFile()); CSVPrinter pPP = new CSVPrinter(fwPP, CSVFormat.DEFAULT);
+                    FileWriter fwFP = new FileWriter(dfFP.toFile()); CSVPrinter pFP = new CSVPrinter(fwFP, CSVFormat.DEFAULT);
+                    FileWriter fwVF = new FileWriter(dfVF.toFile()); CSVPrinter pVF = new CSVPrinter(fwVF, CSVFormat.DEFAULT);
+                    FileWriter fwPF = new FileWriter(dfPF.toFile()); CSVPrinter pPF = new CSVPrinter(fwPF, CSVFormat.DEFAULT);
+                    FileWriter fwFF = new FileWriter(dfFF.toFile()); CSVPrinter pFF = new CSVPrinter(fwFF, CSVFormat.DEFAULT)
+                ) {
+                    for (DataFlowEdge edge : context.dataFlowEdges) {
+                        String src = edge.getSourceId();
+                        String tgt = edge.getTargetId();
+                        if (src != null && tgt != null) {
+                            if (varIds.contains(src) && paramIds.contains(tgt)) pVP.printRecord(src, tgt, edge.getFlowType());
+                            else if (paramIds.contains(src) && paramIds.contains(tgt)) pPP.printRecord(src, tgt, edge.getFlowType());
+                            else if (fieldIds.contains(src) && paramIds.contains(tgt)) pFP.printRecord(src, tgt, edge.getFlowType());
+                            else if (varIds.contains(src) && fieldIds.contains(tgt)) pVF.printRecord(src, tgt, edge.getFlowType());
+                            else if (paramIds.contains(src) && fieldIds.contains(tgt)) pPF.printRecord(src, tgt, edge.getFlowType());
+                            else if (fieldIds.contains(src) && fieldIds.contains(tgt)) pFF.printRecord(src, tgt, edge.getFlowType());
+                        }
+                    }
+                }
 
                 logger.info("Executing bulk COPY commands...");
                 executeOrThrow(conn,
@@ -397,6 +490,14 @@ public class ExportPass implements Pass {
                 executeOrThrow(conn, "COPY Field FROM '" + fieldsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
                 executeOrThrow(conn, "COPY DependsOn FROM '" + dependsOnCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
                 executeOrThrow(conn, "COPY HasField FROM '" + hasFieldCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY Parameter FROM '" + paramsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY Variable FROM '" + varsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfVP.toAbsolutePath().toString() + "' (FROM='Variable', TO='Parameter', PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfPP.toAbsolutePath().toString() + "' (FROM='Parameter', TO='Parameter', PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfFP.toAbsolutePath().toString() + "' (FROM='Field', TO='Parameter', PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfVF.toAbsolutePath().toString() + "' (FROM='Variable', TO='Field', PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfPF.toAbsolutePath().toString() + "' (FROM='Parameter', TO='Field', PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DataFlow FROM '" + dfFF.toAbsolutePath().toString() + "' (FROM='Field', TO='Field', PARALLEL=FALSE)");
             } else {
                 logger.info("Performing high-performance incremental updates (Purge-then-Create)...");
                 
