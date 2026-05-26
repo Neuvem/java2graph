@@ -19,12 +19,13 @@ public class Java2GraphConfig {
 
     private boolean indexAllJarEntries = true;
     private boolean decompile = true;
-    private DecompilerType decompilerType = DecompilerType.CFR;
+    private DecompilerType decompilerType = DecompilerType.VINEFLOWER;
     private List<Path> incrementalFiles;
     private List<Path> incrementalJars;
     private Path mutationPlanPath;
     private boolean gitCheckpoint;
     private Path dbPath;
+    private int maxDecompileDepth = 3;
 
 
     public Java2GraphConfig() {}
@@ -77,6 +78,9 @@ public class Java2GraphConfig {
     public Path getDbPath() { return dbPath; }
     public void setDbPath(Path dbPath) { this.dbPath = dbPath; }
 
+    public int getMaxDecompileDepth() { return maxDecompileDepth; }
+    public void setMaxDecompileDepth(int maxDecompileDepth) { this.maxDecompileDepth = maxDecompileDepth; }
+
 
     public static Builder builder() { return new Builder(); }
 
@@ -98,6 +102,7 @@ public class Java2GraphConfig {
         public Builder mutationPlanPath(Path mutationPlanPath) { config.mutationPlanPath = mutationPlanPath; return this; }
         public Builder gitCheckpoint(boolean gitCheckpoint) { config.gitCheckpoint = gitCheckpoint; return this; }
         public Builder dbPath(Path dbPath) { config.dbPath = dbPath; return this; }
+        public Builder maxDecompileDepth(int maxDecompileDepth) { config.maxDecompileDepth = maxDecompileDepth; return this; }
         public Java2GraphConfig build() { return config; }
 
     }

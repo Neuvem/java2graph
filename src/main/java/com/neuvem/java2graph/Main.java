@@ -50,10 +50,13 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--no-decompile"}, description = "Disable high-fidelity decompilation of external methods", fallbackValue = "true", defaultValue = "false")
     private boolean noDecompile;
 
+    @Option(names = {"--max-decompile-depth"}, description = "Maximum depth to recursively decompile 3rd party libraries", defaultValue = "3")
+    private int maxDecompileDepth;
+
     @Option(names = {"--cache-dir"}, description = "Directory to cache decompiled source files")
     private Path cacheDir;
 
-    @Option(names = {"--decompiler"}, description = "Decompiler to use: CFR, VINEFLOWER", defaultValue = "CFR")
+    @Option(names = {"--decompiler"}, description = "Decompiler to use: CFR, VINEFLOWER", defaultValue = "VINEFLOWER")
     private Java2GraphConfig.DecompilerType decompilerType;
 
     @Option(names = {"--incremental"}, split = ",", description = "List of files to re-index (incremental mode)")
@@ -131,6 +134,7 @@ public class Main implements Callable<Integer> {
                 .cacheDir(cacheDir)
                 .incrementalFiles(incrementalFiles)
                 .incrementalJars(incrementalJars)
+                .maxDecompileDepth(maxDecompileDepth)
                 .build();
 
         GraphContext context = new GraphContext();

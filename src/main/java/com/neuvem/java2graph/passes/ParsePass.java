@@ -357,7 +357,7 @@ public class ParsePass implements Pass {
         if (Files.isDirectory(path)) {
             try (Stream<Path> paths = Files.walk(path)) {
                 paths.filter(p -> p.toString().endsWith(".jar"))
-                        .filter(p -> !p.toString().contains(".java2graph") && !p.toString().contains(".decypher"))
+                        .filter(p -> !p.toString().contains("/.java2graph/") && !p.toString().contains("/.decypher/graph"))
                         .forEach(p -> scanJar(context, p));
             } catch (IOException e) {
                 System.err.println("Warning: Failed to walk jar directory: " + path);
@@ -392,7 +392,7 @@ public class ParsePass implements Pass {
         if (Files.isDirectory(path)) {
             try (Stream<Path> paths = Files.walk(path)) {
                 paths.filter(p -> p.toString().endsWith(".jar"))
-                        .filter(p -> !p.toString().contains(".java2graph") && !p.toString().contains(".decypher"))
+                        .filter(p -> !p.toString().contains("/.java2graph/") && !p.toString().contains("/.decypher/graph"))
                         .forEach(p -> {
                             try {
                                 urls.add(p.toUri().toURL());

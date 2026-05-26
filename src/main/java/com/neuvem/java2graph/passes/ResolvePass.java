@@ -89,9 +89,18 @@ public class ResolvePass implements Pass {
         });
     }
 
-    public static void decompileAndFleshOut(GraphContext context, Java2GraphConfig config, String classFqn) {
+    public static void decompileAndFleshOut(GraphContext context, Java2GraphConfig config, String classFqn, int depth) {
         if (!config.isDecompile() || classFqn == null || classFqn.startsWith("<unresolvedNamespace>")
                 || classFqn.equals("UNKNOWN") || classFqn.equals("java.lang.Object")) {
+            return;
+        }
+
+        if (depth >= config.getMaxDecompileDepth()) {
+            return;
+        }
+
+        if (classFqn.startsWith("java.") || classFqn.startsWith("javax.") ||
+            classFqn.startsWith("sun.") || classFqn.startsWith("jdk.")) {
             return;
         }
 
@@ -102,8 +111,9 @@ public class ResolvePass implements Pass {
             return;
         }
 
-        if (context.decompileCache == null)
+        if (context.decompileCache == null) {
             return;
+        }
 
         Optional<String> cachedSource = context.decompileCache.get(classFqn);
         String source;
@@ -118,11 +128,14 @@ public class ResolvePass implements Pass {
 
             if (source != null) {
                 context.decompileCache.put(classFqn, source);
+                logger.info("Decompiled external class: {} ({} chars)", classFqn, source.length());
+            } else {
+                logger.debug("Decompilation returned null for: {}", classFqn);
             }
         }
 
         if (source != null) {
-            fleshOutFromSource(classFqn, source, context, config);
+            fleshOutFromSource(classFqn, source, context, config, depth);
         }
     }
 
@@ -266,14 +279,22 @@ public class ResolvePass implements Pass {
     }
 
     private static void fleshOutFromSource(String classFqn, String source, GraphContext context,
-            Java2GraphConfig config) {
+            Java2GraphConfig config, int depth) {
         try {
             com.github.javaparser.JavaParser parser = new com.github.javaparser.JavaParser();
             CompilationUnit cu = parser.parse(source).getResult().orElse(null);
             if (cu == null)
                 return;
 
+            if (context.typeSolver != null) {
+                com.github.javaparser.symbolsolver.JavaSymbolSolver symbolSolver = new com.github.javaparser.symbolsolver.JavaSymbolSolver((com.github.javaparser.resolution.TypeSolver) context.typeSolver);
+                cu.setData(com.github.javaparser.ast.Node.SYMBOL_RESOLVER_KEY, symbolSolver);
+            }
+
+            Map<String, TypeDeclaration<?>> classAstIndex = new ConcurrentHashMap<>();
             for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
+                td.getFullyQualifiedName().ifPresent(fqn -> classAstIndex.put(fqn, (TypeDeclaration<?>) td));
+
                 Optional<String> optionalFqn = td.getFullyQualifiedName();
                 if (optionalFqn.isPresent() && optionalFqn.get().equals(classFqn)) {
                     ClassNode cn = context.classes.get(classFqn);
@@ -297,6 +318,10 @@ public class ResolvePass implements Pass {
                     }
                 }
             }
+
+            // Traverse the decompiled code to find further calls
+            cu.accept(new ResolverVisitor(context, config, classAstIndex, cu, "virtual:" + classFqn, depth + 1), null);
+
         } catch (Exception e) {
             logger.warn("Warning: Failed to flesh out from source: {}", classFqn);
         }
@@ -323,6 +348,7 @@ public class ResolvePass implements Pass {
 
         private final CompilationUnit cu;
         private final String filePath;
+        private final int depth;
         private String currentClassFqn = null;
         private String currentMethodFqn = null;
         private final Set<String> seenEdges = ConcurrentHashMap.newKeySet();
@@ -330,11 +356,17 @@ public class ResolvePass implements Pass {
 
         public ResolverVisitor(GraphContext context, Java2GraphConfig config,
                 Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu, String filePath) {
+            this(context, config, classAstIndex, cu, filePath, 0);
+        }
+
+        public ResolverVisitor(GraphContext context, Java2GraphConfig config,
+                Map<String, TypeDeclaration<?>> classAstIndex, CompilationUnit cu, String filePath, int depth) {
             this.context = context;
             this.config = config;
             this.classAstIndex = classAstIndex;
             this.cu = cu;
             this.filePath = filePath;
+            this.depth = depth;
             String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
             Map<String, Map<String, String>> imports = buildImportMaps(cu, pkg);
             this.importMap = imports.get("types");
@@ -432,8 +464,12 @@ public class ResolvePass implements Pass {
                     });
 
                     if (calledFqn.contains(".") && !calledFqn.startsWith("<unresolvedNamespace>")) {
-                        String classFqn = calledFqn.substring(0, calledFqn.lastIndexOf('.'));
-                        decompileAndFleshOut(context, config, classFqn);
+                        String base = calledFqn.contains("(") ? calledFqn.substring(0, calledFqn.indexOf('(')) : calledFqn;
+                        int lastDot = base.lastIndexOf('.');
+                        if (lastDot > 0) {
+                            String classFqn = base.substring(0, lastDot);
+                            decompileAndFleshOut(context, config, classFqn, depth);
+                        }
                     }
 
                     String edgeKey = currentMethodFqn + "\u2192" + calledFqn;
@@ -523,7 +559,7 @@ public class ResolvePass implements Pass {
             if (parentFqn != null) {
                 context.inheritanceEdges
                         .add(InheritanceEdge.builder().childFqn(childFqn).parentFqn(parentFqn).type(relType).build());
-                decompileAndFleshOut(context, config, parentFqn);
+                decompileAndFleshOut(context, config, parentFqn, depth);
             }
         }
 
@@ -650,23 +686,36 @@ public class ResolvePass implements Pass {
                 try {
                     checkComplexity(n);
                     ResolvedType rt = n.calculateResolvedType();
-                    String desc = rt.describe();
+                    String desc = stripGenerics(rt.describe());
                     if (!desc.startsWith("?"))
                         functionalInterface = desc;
                 } catch (Throwable ignored) {
                 }
             }
-            String lambdaFqn = currentClassFqn + ".<lambda>" + idx + "()";
-            context.methods.put(lambdaFqn,
-                    MethodNode.builder().id(lambdaFqn).fqn(lambdaFqn).name("<lambda>" + idx + "()").signature("()")
-                            .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn).isLambda(true).build());
-            if (functionalInterface != null)
-                context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(lambdaFqn)
+            
+            String lambdaClassFqn = currentClassFqn + "$<lambda-class>" + idx;
+            context.classes.put(lambdaClassFqn, ClassNode.builder()
+                    .id(lambdaClassFqn).fqn(lambdaClassFqn).name("<lambda-class>" + idx)
+                    .isInterface(false).declarationCode("// Synthetic lambda class").filePath(filePath).build());
+            
+            if (functionalInterface != null) {
+                context.inheritanceEdges.add(InheritanceEdge.builder().childFqn(lambdaClassFqn)
                         .parentFqn(functionalInterface).type("IMPLEMENTS").build());
+                decompileAndFleshOut(context, config, functionalInterface, depth);
+            }
+
+            String lambdaFqn = lambdaClassFqn + ".<lambda>()";
+            context.methods.put(lambdaFqn,
+                    MethodNode.builder().id(lambdaFqn).fqn(lambdaFqn).name("<lambda>").signature("()")
+                            .sourceCode(getSourceCode(n)).containingClassFqn(lambdaClassFqn).isLambda(true).filePath(filePath).build());
+            
             addCall(lambdaFqn);
+            String prevClass = currentClassFqn;
             String prevMethod = currentMethodFqn;
+            currentClassFqn = lambdaClassFqn;
             currentMethodFqn = lambdaFqn;
             super.visit(n, arg);
+            currentClassFqn = prevClass;
             currentMethodFqn = prevMethod;
         }
 

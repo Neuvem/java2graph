@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 public class ExportPass implements Pass {
@@ -114,7 +115,7 @@ public class ExportPass implements Pass {
         try (FileWriter out = new FileWriter(dir.resolve("methods.csv").toFile());
                 CSVPrinter printer = new CSVPrinter(out,
                         CSVFormat.Builder.create().setHeader("id", "fqn", "name", "signature", "isExternal",
-                                "annotations", "sourceCode", "containingClassFqn", "isLambda", "filePath").build())) {
+                                "annotations", "sourceCode", "isLambda", "filePath").build())) {
             for (MethodNode node : context.methods.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
                     String annotations = String.join(";", node.getAnnotations());
@@ -228,14 +229,23 @@ public class ExportPass implements Pass {
                 executeOrThrow(conn, "CREATE REL TABLE Calls(FROM Method TO Method)");
 
                 Path tempDir = Files.createTempDirectory("ladybug_import");
+
+                // Take consistent snapshots to prevent race conditions from background threads
+                // that may still be adding to the ConcurrentHashMap.
+                List<ClassNode> classSnapshot = new java.util.ArrayList<>(context.classes.values());
+                List<MethodNode> methodSnapshot = new java.util.ArrayList<>(context.methods.values());
+                Set<String> classIds = new HashSet<>();
+                Set<String> methodIds = new HashSet<>();
+
                 Path classesCsv = tempDir.resolve("classes.csv");
                 try (FileWriter out = new FileWriter(classesCsv.toFile());
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
-                    for (ClassNode node : context.classes.values()) {
+                    for (ClassNode node : classSnapshot) {
                         if (node.getId() != null && !node.getId().isBlank()) {
                             String annotations = String.join(";", node.getAnnotations());
                             printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(),
                                     node.isExternal(), annotations, node.getDeclarationCode(), node.getFilePath());
+                            classIds.add(node.getId());
                         }
                     }
                 }
@@ -243,12 +253,13 @@ public class ExportPass implements Pass {
                 Path methodsCsv = tempDir.resolve("methods.csv");
                 try (FileWriter out = new FileWriter(methodsCsv.toFile());
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
-                    for (MethodNode node : context.methods.values()) {
+                    for (MethodNode node : methodSnapshot) {
                         if (node.getId() != null && !node.getId().isBlank()) {
                             String annotations = String.join(";", node.getAnnotations());
                             printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(),
                                     node.isExternal(), annotations, node.getSourceCode(), node.isLambda(),
                                     node.getFilePath());
+                            methodIds.add(node.getId());
                         }
                     }
                 }
@@ -261,7 +272,9 @@ public class ExportPass implements Pass {
                         CSVPrinter implPrinter = new CSVPrinter(implOut, CSVFormat.DEFAULT)) {
                     for (InheritanceEdge edge : context.inheritanceEdges) {
                         if (edge.getChildFqn() != null && !edge.getChildFqn().isBlank() &&
-                                edge.getParentFqn() != null && !edge.getParentFqn().isBlank()) {
+                                edge.getParentFqn() != null && !edge.getParentFqn().isBlank() &&
+                                classIds.contains(edge.getChildFqn()) &&
+                                classIds.contains(edge.getParentFqn())) {
                             if ("EXTENDS".equals(edge.getType())) {
                                 extPrinter.printRecord(edge.getChildFqn(), edge.getParentFqn());
                             } else {
@@ -276,7 +289,9 @@ public class ExportPass implements Pass {
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                     for (MethodCallEdge edge : context.callEdges) {
                         if (edge.getCallerMethodFqn() != null && !edge.getCallerMethodFqn().isBlank() &&
-                                edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank()) {
+                                edge.getCalledMethodFqn() != null && !edge.getCalledMethodFqn().isBlank() &&
+                                methodIds.contains(edge.getCallerMethodFqn()) &&
+                                methodIds.contains(edge.getCalledMethodFqn())) {
                             printer.printRecord(edge.getCallerMethodFqn(), edge.getCalledMethodFqn());
                         }
                     }
@@ -285,10 +300,12 @@ public class ExportPass implements Pass {
                 Path definesCsv = tempDir.resolve("defines.csv");
                 try (FileWriter out = new FileWriter(definesCsv.toFile());
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
-                    for (MethodNode node : context.methods.values()) {
+                    for (MethodNode node : methodSnapshot) {
                         if (node.getContainingClassFqn() != null && !node.getContainingClassFqn().isBlank() &&
-                                node.getFqn() != null && !node.getFqn().isBlank()) {
-                            printer.printRecord(node.getContainingClassFqn(), node.getFqn());
+                                node.getId() != null && !node.getId().isBlank() &&
+                                classIds.contains(node.getContainingClassFqn()) &&
+                                methodIds.contains(node.getId())) {
+                            printer.printRecord(node.getContainingClassFqn(), node.getId());
                         }
                     }
                 }
@@ -446,10 +463,11 @@ public class ExportPass implements Pass {
                     }
                 }
                 for (MethodNode node : context.methods.values()) {
-                    if (node.getContainingClassFqn() != null) {
+                    if (node.getContainingClassFqn() != null && node.getId() != null &&
+                            !node.getId().isBlank()) {
                         addBatch.accept(String.format(
                                         "MATCH (a:Class {id: '%s'}), (b:Method {id: '%s'}) MERGE (a)-[r:Defines]->(b)",
-                                        escape(node.getContainingClassFqn()), escape(node.getFqn())));
+                                        escape(node.getContainingClassFqn()), escape(node.getId())));
                         edgeCount++;
                     }
                 }
