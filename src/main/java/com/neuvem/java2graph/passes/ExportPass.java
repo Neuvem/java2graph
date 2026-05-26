@@ -6,6 +6,7 @@ import com.neuvem.java2graph.Java2GraphConfig;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import com.neuvem.java2graph.models.*;
+import com.google.gson.Gson;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 
@@ -19,6 +20,7 @@ import java.util.Set;
 
 public class ExportPass implements Pass {
     private static final Logger logger = LogManager.getLogger(ExportPass.class);
+    private static final Gson gson = new Gson();
     private Database db;
     private Path resolvedDbPath;
     private boolean isIncremental;
@@ -79,6 +81,8 @@ public class ExportPass implements Pass {
             exportInheritanceCsv(config.getOutCsvDir(), context);
             exportMethodCallsCsv(config.getOutCsvDir(), context);
             exportMethodDefinitionsCsv(config.getOutCsvDir(), context);
+            exportFieldsCsv(config.getOutCsvDir(), context);
+            exportDependsOnCsv(config.getOutCsvDir(), context);
         }
 
         if (resolvedDbPath != null) {
@@ -103,7 +107,7 @@ public class ExportPass implements Pass {
                         "isInterface", "isExternal", "annotations", "declarationCode", "filePath").build())) {
             for (ClassNode node : context.classes.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    String annotations = String.join(";", node.getAnnotations());
+                    String annotations = gson.toJson(node.getAnnotations());
                     printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(),
                             node.isExternal(), annotations, node.getDeclarationCode(), node.getFilePath());
                 }
@@ -118,7 +122,7 @@ public class ExportPass implements Pass {
                                 "annotations", "sourceCode", "isLambda", "filePath").build())) {
             for (MethodNode node : context.methods.values()) {
                 if (node.getId() != null && !node.getId().isBlank()) {
-                    String annotations = String.join(";", node.getAnnotations());
+                    String annotations = gson.toJson(node.getAnnotations());
                     printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(),
                             node.isExternal(), annotations, node.getSourceCode(), node.getContainingClassFqn(),
                             node.isLambda(), node.getFilePath());
@@ -166,6 +170,31 @@ public class ExportPass implements Pass {
         }
     }
 
+    private void exportFieldsCsv(Path dir, GraphContext context) throws IOException {
+        try (FileWriter out = new FileWriter(dir.resolve("fields.csv").toFile());
+                CSVPrinter printer = new CSVPrinter(out,
+                        CSVFormat.Builder.create().setHeader("id", "fqn", "name", "typeFqn", "containingClassFqn", "annotations", "filePath").build())) {
+            for (FieldNode node : context.fields.values()) {
+                if (node.getId() != null && !node.getId().isBlank()) {
+                    String annotations = gson.toJson(node.getAnnotations());
+                    printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getTypeFqn(), node.getContainingClassFqn(), annotations, node.getFilePath());
+                }
+            }
+        }
+    }
+
+    private void exportDependsOnCsv(Path dir, GraphContext context) throws IOException {
+        try (FileWriter out = new FileWriter(dir.resolve("depends_on.csv").toFile());
+                CSVPrinter printer = new CSVPrinter(out,
+                        CSVFormat.Builder.create().setHeader("sourceFqn", "targetFqn", "injectionType").build())) {
+            for (DependencyEdge edge : context.dependencyEdges) {
+                if (edge.getSourceFqn() != null && edge.getTargetFqn() != null) {
+                    printer.printRecord(edge.getSourceFqn(), edge.getTargetFqn(), edge.getInjectionType());
+                }
+            }
+        }
+    }
+
     private void exportLadybug(Java2GraphConfig config, GraphContext context) {
         Set<String> affectedPaths = new HashSet<>();
         if (isIncremental) {
@@ -205,6 +234,10 @@ public class ExportPass implements Pass {
                 String filePath = entry.getValue().getFilePath();
                 return filePath == null || !affectedPaths.contains(filePath);
             });
+            context.fields.entrySet().removeIf(entry -> {
+                String filePath = entry.getValue().getFilePath();
+                return filePath == null || !affectedPaths.contains(filePath);
+            });
 
             logger.info("Purged GraphContext for incremental export: {} -> {} classes, {} -> {} methods.",
                     startingClasses, context.classes.size(), startingMethods, context.methods.size());
@@ -227,6 +260,9 @@ public class ExportPass implements Pass {
                 executeOrThrow(conn, "CREATE REL TABLE Implements(FROM Class TO Class)");
                 executeOrThrow(conn, "CREATE REL TABLE Defines(FROM Class TO Method)");
                 executeOrThrow(conn, "CREATE REL TABLE Calls(FROM Method TO Method)");
+                executeOrThrow(conn, "CREATE NODE TABLE Field(id STRING, fqn STRING, name STRING, typeFqn STRING, containingClassFqn STRING, annotations STRING, filePath STRING, PRIMARY KEY (id))");
+                executeOrThrow(conn, "CREATE REL TABLE DependsOn(FROM Class TO Class, injectionType STRING)");
+                executeOrThrow(conn, "CREATE REL TABLE HasField(FROM Class TO Field)");
 
                 Path tempDir = Files.createTempDirectory("ladybug_import");
 
@@ -234,15 +270,17 @@ public class ExportPass implements Pass {
                 // that may still be adding to the ConcurrentHashMap.
                 List<ClassNode> classSnapshot = new java.util.ArrayList<>(context.classes.values());
                 List<MethodNode> methodSnapshot = new java.util.ArrayList<>(context.methods.values());
+                List<FieldNode> fieldSnapshot = new java.util.ArrayList<>(context.fields.values());
                 Set<String> classIds = new HashSet<>();
                 Set<String> methodIds = new HashSet<>();
+                Set<String> fieldIds = new HashSet<>();
 
                 Path classesCsv = tempDir.resolve("classes.csv");
                 try (FileWriter out = new FileWriter(classesCsv.toFile());
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                     for (ClassNode node : classSnapshot) {
                         if (node.getId() != null && !node.getId().isBlank()) {
-                            String annotations = String.join(";", node.getAnnotations());
+                            String annotations = gson.toJson(node.getAnnotations());
                             printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.isInterface(),
                                     node.isExternal(), annotations, node.getDeclarationCode(), node.getFilePath());
                             classIds.add(node.getId());
@@ -255,7 +293,7 @@ public class ExportPass implements Pass {
                         CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
                     for (MethodNode node : methodSnapshot) {
                         if (node.getId() != null && !node.getId().isBlank()) {
-                            String annotations = String.join(";", node.getAnnotations());
+                            String annotations = gson.toJson(node.getAnnotations());
                             printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getSignature(),
                                     node.isExternal(), annotations, node.getSourceCode(), node.isLambda(),
                                     node.getFilePath());
@@ -309,6 +347,40 @@ public class ExportPass implements Pass {
                         }
                     }
                 }
+                
+                Path fieldsCsv = tempDir.resolve("fields.csv");
+                try (FileWriter out = new FileWriter(fieldsCsv.toFile());
+                        CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
+                    for (FieldNode node : fieldSnapshot) {
+                        if (node.getId() != null && !node.getId().isBlank()) {
+                            String annotations = gson.toJson(node.getAnnotations());
+                            printer.printRecord(node.getId(), node.getFqn(), node.getName(), node.getTypeFqn(), node.getContainingClassFqn(), annotations, node.getFilePath());
+                            fieldIds.add(node.getId());
+                        }
+                    }
+                }
+                
+                Path dependsOnCsv = tempDir.resolve("depends_on.csv");
+                try (FileWriter out = new FileWriter(dependsOnCsv.toFile());
+                        CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
+                    for (DependencyEdge edge : context.dependencyEdges) {
+                        if (edge.getSourceFqn() != null && edge.getTargetFqn() != null &&
+                            classIds.contains(edge.getSourceFqn()) && classIds.contains(edge.getTargetFqn())) {
+                            printer.printRecord(edge.getSourceFqn(), edge.getTargetFqn(), edge.getInjectionType());
+                        }
+                    }
+                }
+
+                Path hasFieldCsv = tempDir.resolve("has_field.csv");
+                try (FileWriter out = new FileWriter(hasFieldCsv.toFile());
+                        CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT)) {
+                    for (FieldNode node : fieldSnapshot) {
+                        if (node.getContainingClassFqn() != null && node.getId() != null &&
+                            classIds.contains(node.getContainingClassFqn()) && fieldIds.contains(node.getId())) {
+                            printer.printRecord(node.getContainingClassFqn(), node.getId());
+                        }
+                    }
+                }
 
                 logger.info("Executing bulk COPY commands...");
                 executeOrThrow(conn,
@@ -322,6 +394,9 @@ public class ExportPass implements Pass {
                 executeOrThrow(conn,
                         "COPY Defines FROM '" + definesCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
                 executeOrThrow(conn, "COPY Calls FROM '" + callsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY Field FROM '" + fieldsCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY DependsOn FROM '" + dependsOnCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
+                executeOrThrow(conn, "COPY HasField FROM '" + hasFieldCsv.toAbsolutePath().toString() + "' (PARALLEL=FALSE)");
             } else {
                 logger.info("Performing high-performance incremental updates (Purge-then-Create)...");
                 
@@ -368,6 +443,7 @@ public class ExportPass implements Pass {
                         logger.info("Purging existing data for file (relative): {}", relPath);
                         addBatch.accept("MATCH (n:Class {filePath: '" + escape(relPath) + "'}) DETACH DELETE n");
                         addBatch.accept("MATCH (m:Method {filePath: '" + escape(relPath) + "'}) DETACH DELETE m");
+                        addBatch.accept("MATCH (f:Field {filePath: '" + escape(relPath) + "'}) DETACH DELETE f");
                     }
                 }
                 
@@ -383,6 +459,11 @@ public class ExportPass implements Pass {
                         addBatch.accept("MATCH (m:Method {id: '" + escape(node.getId()) + "'}) DETACH DELETE m");
                     }
                 }
+                for (FieldNode node : context.fields.values()) {
+                    if (node.getId() != null) {
+                        addBatch.accept("MATCH (f:Field {id: '" + escape(node.getId()) + "'}) DETACH DELETE f");
+                    }
+                }
 
                 if (config.getIncrementalJars() != null) {
                     for (Path path : config.getIncrementalJars()) {
@@ -391,6 +472,7 @@ public class ExportPass implements Pass {
                         logger.info("Purging existing data for JAR: {}", p);
                         addBatch.accept("MATCH (n:Class {filePath: '" + escape(p) + "'}) DETACH DELETE n");
                         addBatch.accept("MATCH (m:Method {filePath: '" + escape(p) + "'}) DETACH DELETE m");
+                        addBatch.accept("MATCH (f:Field {filePath: '" + escape(p) + "'}) DETACH DELETE f");
                     }
                 }
 
@@ -398,10 +480,10 @@ public class ExportPass implements Pass {
                 flushBatch.run();
 
                 // 2. CREATE/MERGE: Use fast CREATE for purged nodes, MERGE for others.
-                int classCount = 0, methodCount = 0, edgeCount = 0;
+                int classCount = 0, methodCount = 0, fieldCount = 0, edgeCount = 0;
                 for (ClassNode node : context.classes.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        String annotations = String.join(";", node.getAnnotations());
+                        String annotations = gson.toJson(node.getAnnotations());
                         boolean wasPurged = purgedPaths.contains(node.getFilePath());
                         if (wasPurged) {
                             addBatch.accept(String.format(
@@ -422,7 +504,7 @@ public class ExportPass implements Pass {
                 }
                 for (MethodNode node : context.methods.values()) {
                     if (node.getId() != null && !node.getId().isBlank()) {
-                        String annotations = String.join(";", node.getAnnotations());
+                        String annotations = gson.toJson(node.getAnnotations());
                         boolean wasPurged = purgedPaths.contains(node.getFilePath());
                         if (wasPurged) {
                             addBatch.accept(String.format(
@@ -438,6 +520,24 @@ public class ExportPass implements Pass {
                                 escape(node.getSourceCode()), node.isLambda(), escape(node.getFilePath())));
                         }
                         methodCount++;
+                    }
+                }
+                for (FieldNode node : context.fields.values()) {
+                    if (node.getId() != null && !node.getId().isBlank()) {
+                        String annotations = gson.toJson(node.getAnnotations());
+                        boolean wasPurged = purgedPaths.contains(node.getFilePath());
+                        if (wasPurged) {
+                            addBatch.accept(String.format(
+                                "CREATE (n:Field {id: '%s', fqn: '%s', name: '%s', typeFqn: '%s', containingClassFqn: '%s', annotations: '%s', filePath: '%s'})",
+                                escape(node.getId()), escape(node.getFqn()), escape(node.getName()), escape(node.getTypeFqn()), escape(node.getContainingClassFqn()),
+                                escape(annotations), escape(node.getFilePath())));
+                        } else {
+                            addBatch.accept(String.format(
+                                "MERGE (n:Field {id: '%s'}) ON CREATE SET n.fqn = '%s', n.name = '%s', n.typeFqn = '%s', n.containingClassFqn = '%s', n.annotations = '%s', n.filePath = '%s'",
+                                escape(node.getId()), escape(node.getFqn()), escape(node.getName()), escape(node.getTypeFqn()), escape(node.getContainingClassFqn()),
+                                escape(annotations), escape(node.getFilePath())));
+                        }
+                        fieldCount++;
                     }
                 }
                 // Flush nodes so they exist before edges
@@ -471,10 +571,26 @@ public class ExportPass implements Pass {
                         edgeCount++;
                     }
                 }
+                for (DependencyEdge edge : context.dependencyEdges) {
+                    if (edge.getSourceFqn() != null && edge.getTargetFqn() != null) {
+                        addBatch.accept(String.format(
+                                "MATCH (a:Class {id: '%s'}), (b:Class {id: '%s'}) MERGE (a)-[r:DependsOn {injectionType: '%s'}]->(b)",
+                                escape(edge.getSourceFqn()), escape(edge.getTargetFqn()), escape(edge.getInjectionType())));
+                        edgeCount++;
+                    }
+                }
+                for (FieldNode node : context.fields.values()) {
+                    if (node.getContainingClassFqn() != null && node.getId() != null && !node.getId().isBlank()) {
+                        addBatch.accept(String.format(
+                                "MATCH (a:Class {id: '%s'}), (b:Field {id: '%s'}) MERGE (a)-[r:HasField]->(b)",
+                                escape(node.getContainingClassFqn()), escape(node.getId())));
+                        edgeCount++;
+                    }
+                }
                 
                 flushBatch.run();
-                logger.info("Incremental update complete: {} classes, {} methods, {} edges created.", classCount,
-                        methodCount, edgeCount);
+                logger.info("Incremental update complete: {} classes, {} methods, {} fields, {} edges created.", classCount,
+                        methodCount, fieldCount, edgeCount);
             }
             logger.info("Inserted nodes and edges into Ladybug.");
         } catch (Exception e) {

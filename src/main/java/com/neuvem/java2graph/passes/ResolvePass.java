@@ -327,9 +327,20 @@ public class ResolvePass implements Pass {
         }
     }
 
-    public static List<String> extractAnnotations(NodeWithAnnotations<?> n) {
-        List<String> annotations = new ArrayList<>();
-        n.getAnnotations().forEach(ann -> annotations.add(ann.getNameAsString()));
+    public static List<AnnotationInfo> extractAnnotations(NodeWithAnnotations<?> n) {
+        List<AnnotationInfo> annotations = new ArrayList<>();
+        n.getAnnotations().forEach(ann -> {
+            AnnotationInfo info = new AnnotationInfo();
+            info.name = ann.getNameAsString();
+            if (ann.isNormalAnnotationExpr()) {
+                ann.asNormalAnnotationExpr().getPairs().forEach(pair -> {
+                    info.attributes.put(pair.getNameAsString(), pair.getValue().toString());
+                });
+            } else if (ann.isSingleMemberAnnotationExpr()) {
+                info.attributes.put("value", ann.asSingleMemberAnnotationExpr().getMemberValue().toString());
+            }
+            annotations.add(info);
+        });
         return annotations;
     }
 
@@ -592,11 +603,30 @@ public class ResolvePass implements Pass {
             } catch (Exception e) {
                 fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString();
             }
+            List<AnnotationInfo> annotations = extractAnnotations(n);
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
                     .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn)
-                    .annotations(extractAnnotations(n))
+                    .annotations(annotations)
                     .isLambda(false).filePath(filePath).build());
+            
+            if (currentClassFqn != null) {
+                boolean hasAutowired = annotations.stream().anyMatch(a -> a.name.equals("Autowired") || a.name.equals("Inject"));
+                if (hasAutowired && n.getParameters().isNonEmpty()) {
+                    com.github.javaparser.ast.body.Parameter param = n.getParameter(0);
+                    String paramType = null;
+                    try {
+                        checkComplexity(param.getType());
+                        paramType = param.getType().resolve().describe();
+                    } catch (Exception e) {
+                        paramType = qualify(param.getType().asString());
+                    }
+                    if (paramType != null) {
+                        context.dependencyEdges.add(DependencyEdge.builder()
+                            .sourceFqn(currentClassFqn).targetFqn(stripGenerics(paramType)).injectionType("Setter").build());
+                    }
+                }
+            }
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             super.visit(n, arg);
@@ -612,11 +642,39 @@ public class ResolvePass implements Pass {
             } catch (Exception e) {
                 fqn = (currentClassFqn != null ? currentClassFqn : "") + "." + n.getSignature().asString();
             }
+            List<AnnotationInfo> annotations = extractAnnotations(n);
             context.methods.put(fqn, MethodNode.builder()
                     .id(fqn).fqn(fqn).name(n.getNameAsString()).signature(n.getSignature().asString())
                     .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn)
-                    .annotations(extractAnnotations(n))
+                    .annotations(annotations)
                     .isLambda(false).filePath(filePath).build());
+                    
+            if (currentClassFqn != null) {
+                boolean hasAutowired = annotations.stream().anyMatch(a -> a.name.equals("Autowired") || a.name.equals("Inject"));
+                boolean isImplicit = false;
+                if (!hasAutowired && n.getParentNode().isPresent() && n.getParentNode().get() instanceof ClassOrInterfaceDeclaration) {
+                    ClassOrInterfaceDeclaration cid = (ClassOrInterfaceDeclaration) n.getParentNode().get();
+                    if (cid.getConstructors().size() == 1) {
+                        isImplicit = true;
+                    }
+                }
+                
+                if (hasAutowired || isImplicit) {
+                    n.getParameters().forEach(param -> {
+                        String paramType = null;
+                        try {
+                            checkComplexity(param.getType());
+                            paramType = param.getType().resolve().describe();
+                        } catch (Exception e) {
+                            paramType = qualify(param.getType().asString());
+                        }
+                        if (paramType != null) {
+                            context.dependencyEdges.add(DependencyEdge.builder()
+                                .sourceFqn(currentClassFqn).targetFqn(stripGenerics(paramType)).injectionType("Constructor").build());
+                        }
+                    });
+                }
+            }
             String prev = currentMethodFqn;
             currentMethodFqn = fqn;
             boolean hasExp = n.getBody().getStatements().stream()
@@ -643,6 +701,37 @@ public class ResolvePass implements Pass {
 
         @Override
         public void visit(FieldDeclaration n, Void arg) {
+            if (currentClassFqn != null) {
+                String fieldTypeFqn = null;
+                try {
+                    checkComplexity(n);
+                    fieldTypeFqn = n.getCommonType().resolve().describe();
+                } catch (Exception e) {
+                    fieldTypeFqn = qualify(n.getCommonType().asString());
+                }
+                final String finalFieldTypeFqn = stripGenerics(fieldTypeFqn);
+                List<AnnotationInfo> fieldAnnotations = extractAnnotations(n);
+                
+                n.getVariables().forEach(v -> {
+                    String fieldName = v.getNameAsString();
+                    String fieldFqn = currentClassFqn + "." + fieldName;
+                    context.fields.put(fieldFqn, FieldNode.builder()
+                        .id(fieldFqn).fqn(fieldFqn).name(fieldName)
+                        .typeFqn(finalFieldTypeFqn).containingClassFqn(currentClassFqn)
+                        .annotations(fieldAnnotations).filePath(filePath)
+                        .build());
+                        
+                    if (fieldAnnotations.stream().anyMatch(a -> a.name.equals("Autowired") || a.name.equals("Inject") || a.name.equals("Resource"))) {
+                        if (finalFieldTypeFqn != null) {
+                            context.dependencyEdges.add(DependencyEdge.builder()
+                                .sourceFqn(currentClassFqn)
+                                .targetFqn(finalFieldTypeFqn)
+                                .injectionType("Field")
+                                .build());
+                        }
+                    }
+                });
+            }
             String fqn = (currentClassFqn != null ? currentClassFqn : "UNKNOWN")
                     + (n.isStatic() ? ".<clinit>()" : ".<init>()");
             context.methods.computeIfAbsent(fqn,

@@ -3,19 +3,16 @@ package com.neuvem.java2graph.models;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MethodNode {
+public class FieldNode {
     private String id;
     private String fqn;
-    private String signature;
     private String name;
-    private String sourceCode;
+    private String typeFqn;
     private String containingClassFqn;
-    private boolean isLambda;
-    private String filePath;
     private List<AnnotationInfo> annotations;
-    private boolean isExternal;
+    private String filePath;
 
-    public MethodNode() {}
+    public FieldNode() {}
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -23,23 +20,14 @@ public class MethodNode {
     public String getFqn() { return fqn; }
     public void setFqn(String fqn) { this.fqn = fqn; }
 
-    public String getSignature() { return signature; }
-    public void setSignature(String signature) { this.signature = signature; }
-
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getSourceCode() { return sourceCode; }
-    public void setSourceCode(String sourceCode) { this.sourceCode = sourceCode; }
+    public String getTypeFqn() { return typeFqn; }
+    public void setTypeFqn(String typeFqn) { this.typeFqn = typeFqn; }
 
     public String getContainingClassFqn() { return containingClassFqn; }
     public void setContainingClassFqn(String containingClassFqn) { this.containingClassFqn = containingClassFqn; }
-
-    public boolean isLambda() { return isLambda; }
-    public void setLambda(boolean isLambda) { this.isLambda = isLambda; }
-
-    public String getFilePath() { return filePath; }
-    public void setFilePath(String filePath) { this.filePath = filePath; }
 
     public List<AnnotationInfo> getAnnotations() {
         if (annotations == null) annotations = new ArrayList<>();
@@ -47,23 +35,20 @@ public class MethodNode {
     }
     public void setAnnotations(List<AnnotationInfo> annotations) { this.annotations = annotations; }
 
-    public boolean isExternal() { return isExternal; }
-    public void setExternal(boolean isExternal) { this.isExternal = isExternal; }
+    public String getFilePath() { return filePath; }
+    public void setFilePath(String filePath) { this.filePath = filePath; }
 
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
-        private MethodNode node = new MethodNode();
+        private FieldNode node = new FieldNode();
         public Builder id(String id) { node.id = id; return this; }
         public Builder fqn(String fqn) { node.fqn = fqn; return this; }
-        public Builder signature(String signature) { node.signature = signature; return this; }
         public Builder name(String name) { node.name = name; return this; }
-        public Builder sourceCode(String sourceCode) { node.sourceCode = sourceCode; return this; }
+        public Builder typeFqn(String typeFqn) { node.typeFqn = typeFqn; return this; }
         public Builder containingClassFqn(String containingClassFqn) { node.containingClassFqn = containingClassFqn; return this; }
-        public Builder isLambda(boolean isLambda) { node.isLambda = isLambda; return this; }
-        public Builder filePath(String filePath) { node.filePath = filePath; return this; }
         public Builder annotations(List<AnnotationInfo> annotations) { node.annotations = annotations; return this; }
-        public Builder isExternal(boolean isExternal) { node.isExternal = isExternal; return this; }
-        public MethodNode build() { return node; }
+        public Builder filePath(String filePath) { node.filePath = filePath; return this; }
+        public FieldNode build() { return node; }
     }
 }

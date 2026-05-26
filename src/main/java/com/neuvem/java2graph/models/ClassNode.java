@@ -10,7 +10,7 @@ public class ClassNode {
     private boolean isInterface;
     private String declarationCode;
     private String filePath;
-    private List<String> annotations;
+    private List<AnnotationInfo> annotations;
     private boolean isExternal;
 
     public ClassNode() {}
@@ -33,11 +33,11 @@ public class ClassNode {
     public String getFilePath() { return filePath; }
     public void setFilePath(String filePath) { this.filePath = filePath; }
 
-    public List<String> getAnnotations() { 
+    public List<AnnotationInfo> getAnnotations() { 
         if (annotations == null) annotations = new ArrayList<>();
         return annotations; 
     }
-    public void setAnnotations(List<String> annotations) { this.annotations = annotations; }
+    public void setAnnotations(List<AnnotationInfo> annotations) { this.annotations = annotations; }
 
     public boolean isExternal() { return isExternal; }
     public void setExternal(boolean isExternal) { this.isExternal = isExternal; }
@@ -52,7 +52,7 @@ public class ClassNode {
         public Builder isInterface(boolean isInterface) { node.isInterface = isInterface; return this; }
         public Builder declarationCode(String code) { node.declarationCode = code; return this; }
         public Builder filePath(String filePath) { node.filePath = filePath; return this; }
-        public Builder annotations(List<String> annotations) { node.annotations = annotations; return this; }
+        public Builder annotations(List<AnnotationInfo> annotations) { node.annotations = annotations; return this; }
         public Builder isExternal(boolean isExternal) { node.isExternal = isExternal; return this; }
         public ClassNode build() { return node; }
     }

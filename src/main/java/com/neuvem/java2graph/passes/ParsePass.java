@@ -13,6 +13,7 @@ import com.neuvem.java2graph.models.ClassNode;
 import com.neuvem.java2graph.models.GraphContext;
 import com.neuvem.java2graph.models.MethodNode;
 import com.neuvem.java2graph.models.InheritanceEdge;
+import com.neuvem.java2graph.models.AnnotationInfo;
 import org.objectweb.asm.*;
 
 import org.apache.logging.log4j.LogManager;
@@ -445,7 +446,7 @@ public class ParsePass implements Pass {
         private final String jarPath;
         private String classFqn;
         private boolean isInterface;
-        private List<String> annotations = new ArrayList<>();
+        private List<AnnotationInfo> annotations = new ArrayList<>();
 
         public SurfaceAreaClassVisitor(GraphContext context, String jarPath) {
             super(Opcodes.ASM9);
@@ -493,7 +494,7 @@ public class ParsePass implements Pass {
         @Override
         public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             String fqn = Type.getType(descriptor).getClassName();
-            annotations.add(fqn);
+            annotations.add(new AnnotationInfo(fqn));
             return null;
         }
 
@@ -532,7 +533,7 @@ public class ParsePass implements Pass {
                         String annFqn = Type.getType(descriptor).getClassName();
                         MethodNode mn = context.methods.get(methodFqn);
                         if (mn != null) {
-                            mn.getAnnotations().add(annFqn);
+                            mn.getAnnotations().add(new AnnotationInfo(annFqn));
                         }
                         return null;
                     }
