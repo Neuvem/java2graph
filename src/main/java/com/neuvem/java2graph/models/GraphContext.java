@@ -11,6 +11,9 @@ public class GraphContext {
     public final java.util.Set<InheritanceEdge> inheritanceEdges = ConcurrentHashMap.newKeySet();
     public final java.util.Set<MethodCallEdge> callEdges = ConcurrentHashMap.newKeySet();
     public final java.util.Set<DependencyEdge> dependencyEdges = ConcurrentHashMap.newKeySet();
+    public final ConcurrentHashMap<String, ParameterNode> parameters = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<String, VariableNode> variables = new ConcurrentHashMap<>();
+    public final java.util.Set<DataFlowEdge> dataFlowEdges = ConcurrentHashMap.newKeySet();
     
     // Store the type solver for use across passes (symbol-solver resolution)
     public Object typeSolver;

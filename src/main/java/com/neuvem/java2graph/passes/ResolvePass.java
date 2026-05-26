@@ -610,6 +610,17 @@ public class ResolvePass implements Pass {
                     .annotations(annotations)
                     .isLambda(false).filePath(filePath).build());
             
+            int pIndex = 0;
+            for (com.github.javaparser.ast.body.Parameter p : n.getParameters()) {
+                String paramName = p.getNameAsString();
+                String paramType = stripGenerics(p.getTypeAsString());
+                String paramId = fqn + ".param" + pIndex;
+                context.parameters.put(paramId, ParameterNode.builder()
+                        .id(paramId).methodFqn(fqn)
+                        .name(paramName).typeFqn(paramType).index(pIndex).build());
+                pIndex++;
+            }
+            
             if (currentClassFqn != null) {
                 boolean hasAutowired = annotations.stream().anyMatch(a -> a.name.equals("Autowired") || a.name.equals("Inject"));
                 if (hasAutowired && n.getParameters().isNonEmpty()) {
@@ -648,6 +659,17 @@ public class ResolvePass implements Pass {
                     .sourceCode(getSourceCode(n)).containingClassFqn(currentClassFqn)
                     .annotations(annotations)
                     .isLambda(false).filePath(filePath).build());
+                    
+            int pIndex = 0;
+            for (com.github.javaparser.ast.body.Parameter p : n.getParameters()) {
+                String paramName = p.getNameAsString();
+                String paramType = stripGenerics(p.getTypeAsString());
+                String paramId = fqn + ".param" + pIndex;
+                context.parameters.put(paramId, ParameterNode.builder()
+                        .id(paramId).methodFqn(fqn)
+                        .name(paramName).typeFqn(paramType).index(pIndex).build());
+                pIndex++;
+            }
                     
             if (currentClassFqn != null) {
                 boolean hasAutowired = annotations.stream().anyMatch(a -> a.name.equals("Autowired") || a.name.equals("Inject"));
@@ -697,6 +719,47 @@ public class ResolvePass implements Pass {
             currentMethodFqn = fqn;
             super.visit(n, arg);
             currentMethodFqn = prev;
+        }
+
+        @Override
+        public void visit(VariableDeclarator n, Void arg) {
+            if (currentMethodFqn != null) {
+                String varName = n.getNameAsString();
+                String varType = stripGenerics(n.getTypeAsString());
+                String varId = currentMethodFqn + "." + varName;
+                context.variables.put(varId, VariableNode.builder()
+                        .id(varId).methodFqn(currentMethodFqn)
+                        .name(varName).typeFqn(varType).build());
+            }
+            super.visit(n, arg);
+        }
+
+        @Override
+        public void visit(AssignExpr n, Void arg) {
+            if (currentMethodFqn != null) {
+                String targetId = null;
+                if (n.getTarget().isFieldAccessExpr()) {
+                    targetId = currentClassFqn + "." + n.getTarget().asFieldAccessExpr().getNameAsString();
+                } else if (n.getTarget().isNameExpr()) {
+                    String name = n.getTarget().asNameExpr().getNameAsString();
+                    if (searchClassForField(currentClassFqn, name) != null) {
+                        targetId = currentClassFqn + "." + name;
+                    }
+                }
+                
+                if (targetId != null) {
+                    String sourceName = null;
+                    if (n.getValue().isNameExpr()) {
+                        sourceName = currentMethodFqn + "." + n.getValue().asNameExpr().getNameAsString();
+                    } else if (n.getValue().isFieldAccessExpr()) {
+                        sourceName = currentClassFqn + "." + n.getValue().asFieldAccessExpr().getNameAsString();
+                    }
+                    if (sourceName != null) {
+                        context.dataFlowEdges.add(new DataFlowEdge(sourceName, targetId, "MUTATES"));
+                    }
+                }
+            }
+            super.visit(n, arg);
         }
 
         @Override
@@ -810,8 +873,8 @@ public class ResolvePass implements Pass {
 
         @Override
         public void visit(MethodCallExpr n, Void arg) {
+            String calledFqn = null;
             if (currentMethodFqn != null) {
-                String calledFqn = null;
                 boolean resolvedViaSolver = false;
                 if (!config.isFastResolve()) {
                     try {
@@ -833,6 +896,22 @@ public class ResolvePass implements Pass {
                 if (!resolvedViaSolver)
                     calledFqn = deduceFqnManually(n);
                 addCall(calledFqn);
+                
+                int argIndex = 0;
+                for (Expression argExpr : n.getArguments()) {
+                    if (argExpr.isNameExpr()) {
+                        String argName = argExpr.asNameExpr().getNameAsString();
+                        String sourceId = currentMethodFqn + "." + argName;
+                        String targetId = calledFqn + ".param" + argIndex;
+                        context.dataFlowEdges.add(new DataFlowEdge(sourceId, targetId, "PASSED_TO"));
+                    } else if (argExpr.isFieldAccessExpr()) {
+                        String argName = argExpr.asFieldAccessExpr().getNameAsString();
+                        String sourceId = currentClassFqn + "." + argName;
+                        String targetId = calledFqn + ".param" + argIndex;
+                        context.dataFlowEdges.add(new DataFlowEdge(sourceId, targetId, "PASSED_TO"));
+                    }
+                    argIndex++;
+                }
             }
             super.visit(n, arg);
         }
